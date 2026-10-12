@@ -23,16 +23,18 @@ def finite(v):
     if not math.isfinite(n): raise ValueError('invalid_number')
     return n
 
-def dt(s):
-    d=datetime.fromisoformat(s)
-    if d.tzinfo is None: raise ValueError('timezone_required')
+def dt(s,field='timestamp'):
+    if not isinstance(s,str) or not s.strip(): raise ValueError('invalid_timestamp_'+field)
+    try: d=datetime.fromisoformat(s)
+    except ValueError: raise ValueError('invalid_timestamp_'+field) from None
+    if d.tzinfo is None: raise ValueError('timezone_required_'+field)
     return d.astimezone(timezone.utc)
 
 def power(s):
-    t=dt(s['time']); a=dt(s['inverter_time']); g=dt(s['grid_time'])
+    t=dt(s['time'],'time'); a=dt(s['inverter_time'],'inverter_time'); g=dt(s['grid_time'],'grid_time')
     if abs((a-g).total_seconds())>2: raise ValueError('solar_skew')
     for k in ('inverter_time','grid_time','boiler_time','heatpump_time'):
-        if not 1 <= (t-dt(s[k])).total_seconds() <= 210: raise ValueError('stale_or_unsettled_'+k)
+        if not 1 <= (t-dt(s[k],k)).total_seconds() <= 210: raise ValueError('stale_or_unsettled_'+k)
     p={'building':finite(s['inverter_w'])-1000*finite(s['grid_kw']),
        'boiler':finite(s['boiler_w']),'heatpump':finite(s['heatpump_w'])}
     if min(p.values())<0: raise ValueError('negative_power')
@@ -148,16 +150,27 @@ class Shadow:
                 'integrated_seconds':c.execute("SELECT COALESCE(SUM((julianday(end)-julianday(start))*86400),0) FROM increments WHERE category='building' AND method='power_trapezoid'").fetchone()[0],
                 'note':'Diagnostic sampled energy, not billing. Raw readings retained; no HA writes.'}
 
-def capture(sources):
-    req=urllib.request.Request(os.environ['HA_URL'].rstrip('/')+'/api/states',headers={'Authorization':'Bearer '+os.environ['HA_TOKEN']})
-    with urllib.request.urlopen(req,timeout=10) as r: states={s['entity_id']:s for s in json.load(r)}
-    result={'time':datetime.now(timezone.utc).isoformat()}
+def snapshot_from_states(sources,rows,now):
+    states={s['entity_id']:s for s in rows if isinstance(s,dict) and isinstance(s.get('entity_id'),str)}
+    result={'time':now.isoformat(),'source_diagnostics':{}}
     for k,id in sources.items():
         s=states.get(id,{})
         result[k]=s.get('state','unavailable')
-        result[k+'_time']=s.get('last_reported',s.get('last_updated'))
+        stamp=None;selected=None
+        for field in ('last_reported','last_updated','last_changed'):
+            try: stamp=dt(s.get(field),field).isoformat();selected=field;break
+            except ValueError: pass
+        result[k+'_time']=stamp
+        result['source_diagnostics'][k]={'entity_present':id in states,
+            'timestamp_field':selected,'timestamp_valid':stamp is not None,
+            'field_types':{f:type(s.get(f)).__name__ for f in ('last_reported','last_updated','last_changed')}}
     for k,source in [('inverter_time','inverter_w'),('grid_time','grid_kw'),('boiler_time','boiler_w'),('heatpump_time','heatpump_w')]: result[k]=result[source+'_time']
     return result
+
+def capture(sources):
+    req=urllib.request.Request(os.environ['HA_URL'].rstrip('/')+'/api/states',headers={'Authorization':'Bearer '+os.environ['HA_TOKEN']})
+    with urllib.request.urlopen(req,timeout=10) as r: rows=json.load(r)
+    return snapshot_from_states(sources,rows,datetime.now(timezone.utc))
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--db',required=True)

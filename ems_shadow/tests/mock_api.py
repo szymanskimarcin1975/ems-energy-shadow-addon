@@ -12,7 +12,7 @@ class Handler(BaseHTTPRequestHandler):
         stamp=(datetime.now(timezone.utc)-timedelta(seconds=5)).isoformat()
         values=dict(inverter_w='1000',grid_kw='-1',boiler_w='500',heatpump_w='300',
                     boiler_kwh='10',heatpump_kwh='5',workday='on')
-        body=json.dumps([dict(entity_id=id,state=values[k],last_updated=stamp)
+        body=json.dumps([dict(entity_id=id,state=values[k],last_reported=None,last_updated=stamp,last_changed=stamp,attributes={})
                          for k,id in IDS.items()]).encode()
         self.send_response(200); self.send_header('Content-Type','application/json')
         self.end_headers(); self.wfile.write(body)

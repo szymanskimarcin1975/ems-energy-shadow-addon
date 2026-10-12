@@ -46,13 +46,16 @@ def make_report(sh, running=True):
         sh.valid_count = accepted
         sh.checked_rowid = c.execute('SELECT COALESCE(MAX(rowid),0) FROM samples').fetchone()[0]
         failures = c.execute("SELECT COUNT(*) FROM events WHERE reason='capture_failed'").fetchone()[0]
+        previous=c.execute("SELECT value FROM state WHERE key='previous'").fetchone()
+        diagnostics=json.loads(previous[0])['sample'].get('source_diagnostics',{}) if previous else {}
         r.update(schema_version=1, generated_at=datetime.now(timezone.utc).isoformat(),
                  running=running, first_sample=first, last_sample=last,
                  last_valid_sample=good, observation_seconds=elapsed,
                  valid_measurements=accepted, failed_capture_attempts=failures,
                  valid_measurements_percent=100*accepted/(r['samples']+failures) if r['samples']+failures else None,
                  integrated_period_percent=100*r['integrated_seconds']/elapsed if elapsed else None,
-                 topology_confirmed=False, cumulative_since_database_creation=True)
+                 topology_confirmed=False, cumulative_since_database_creation=True,
+                 source_diagnostics=diagnostics)
         return r
     finally: c.rollback()
 

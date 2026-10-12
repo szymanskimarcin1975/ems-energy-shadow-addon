@@ -53,6 +53,7 @@ def main():
                '-v',root+'/example_options.json:/data/options.json:ro','ems-shadow:ci')
         first=wait_report(name,2)
         assert first['integrated_seconds']>0 and first['valid_measurements_percent']==100
+        assert all(x['timestamp_field']=='last_updated' for x in first['source_diagnostics'].values())
         command=json.loads(docker('inspect','--format','{{json .Config.Cmd}}',name))
         assert command==['python3','supervise.py']
         processes=check_processes(name)
