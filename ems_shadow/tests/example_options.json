@@ -1,0 +1,11 @@
+{
+  "sources": {
+    "inverter_w": "sensor.example_inverter_power",
+    "grid_kw": "sensor.example_grid_power",
+    "boiler_w": "sensor.example_boiler_power",
+    "heatpump_w": "sensor.example_heatpump_power",
+    "boiler_kwh": "sensor.example_boiler_energy",
+    "heatpump_kwh": "sensor.example_heatpump_energy",
+    "workday": "binary_sensor.example_workday"
+  }
+}

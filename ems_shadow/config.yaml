@@ -1,0 +1,37 @@
+name: EMS Energy SHADOW
+version: 0.1.0
+slug: ems_energy_shadow
+description: Read-only energy observation with a private SQLite ledger
+arch:
+  - amd64
+startup: application
+boot: auto
+backup: cold
+stage: experimental
+init: true
+homeassistant: 2026.9.4
+homeassistant_api: true
+hassio_api: false
+host_network: false
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /ha_config
+options:
+  sources:
+    inverter_w: ""
+    grid_kw: ""
+    boiler_w: ""
+    heatpump_w: ""
+    boiler_kwh: ""
+    heatpump_kwh: ""
+    workday: ""
+schema:
+  sources:
+    inverter_w: str
+    grid_kw: str
+    boiler_w: str
+    heatpump_w: str
+    boiler_kwh: str
+    heatpump_kwh: str
+    workday: str
