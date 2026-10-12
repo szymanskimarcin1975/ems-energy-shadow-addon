@@ -55,3 +55,33 @@ start, kontrola logów/raportu po kilku minutach i po1h. Obserwacja24–48h.
 Nie uruchamiać produkcyjnych liczników bez potwierdzenia topologii i jakości.
 Wycofanie: stop, wyłączyć autostart, backup dodatku, dopiero odinstalowanie.
 Nie resetować istniejących statystyk.
+
+
+## 0.1.2 — jawny, oddzielny rejestr
+
+Wymagane ustawienie `ledger_id`, np. `corrected_sources_20261012`.
+Dozwolone: małe litery, cyfry, `_`, `-`, pierwsza litera, do 64 znaków.
+Pusta wartość, `legacy` i `shadow` są niedozwolone: obserwacja pozostaje wyłączona.
+Nie ma automatycznej migracji ani automatycznego wyboru innego rejestru.
+
+Baza: `/data/ledgers/<ledger_id>/shadow.sqlite`; odcisk siedmiu źródeł
+jest przechowywany osobno w każdej bazie. Zmiana źródeł w tym samym rejestrze
+nadal blokuje start. Nowy rejestr zaczyna od próbki bazowej, bez historii i
+bez naliczania energii za przestój. Restart z tym samym ID kontynuuje dane.
+Globalna blokada `/data/observer.lock` obejmuje wszystkie identyfikatory.
+Stara `/data/shadow.sqlite` oraz WAL/SHM nie są otwierane, modyfikowane ani usuwane.
+
+Raport `ems_shadow/report.yaml` dotyczy wyłącznie aktualnie wybranego rejestru:
+`ledger_id`, `sources_digest`, `addon_version`, `generated_at` jednoznacznie
+określają pochodzenie. Nie łączy wyników rejestrów. Po nieudanym starcie może
+pozostać stary raport: zawsze sprawdzaj wersję, ID i czas. Bazy innych rejestrów
+pozostają dostępne do późniejszej analizy, ale raport aktywny je zastępuje.
+
+Aktualizacja dopiero po zgodzie na publikację i wdrożenie:
+zatrzymać dodatek, wykonać zimną kopię dodatku wraz z całym `/data`, opcjami i
+raportem; użyć aktualizacji zamiast odinstalowania. Zachować siedem źródeł,
+wpisać jawne nowe ID. Przed startem zweryfikować ustawienia. Po osobnej zgodzie
+na start sprawdzić ID/digest, świeżość, baseline i jakość raportu.
+Cofnięcie: zatrzymać, zachować także nowy `/data` i raport; przywrócić zimną
+kopię 0.1.1 wraz z jej opcjami. Nie usuwać nowych rejestrów. 0.1.1 może nadal
+blokować start przy pierwotnej niezgodności źródeł — rollback nie usuwa przyczyny.

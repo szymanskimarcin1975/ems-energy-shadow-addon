@@ -21,3 +21,13 @@ def load_sources(path):
 
 def fingerprint(sources):
     return hashlib.sha256(json.dumps(sources,sort_keys=True).encode()).hexdigest()
+
+
+def load_ledger_id(path):
+    try:
+        with open(path, encoding='utf-8') as f: value=json.load(f).get('ledger_id')
+        if not isinstance(value,str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}',value): raise ValueError
+        if value in ('legacy','shadow'): raise ValueError
+    except (OSError,ValueError,TypeError,AttributeError):
+        raise ConfigurationError('explicit_valid_ledger_id_required') from None
+    return value

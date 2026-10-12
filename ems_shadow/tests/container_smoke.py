@@ -52,6 +52,10 @@ def main():
                '-v',volume+':/data','-v',reports+':/ha_config',
                '-v',root+'/example_options.json:/data/options.json:ro','ems-shadow:ci')
         first=wait_report(name,2)
+        assert first['ledger_id']=='synthetic_ci'
+        assert len(first['sources_digest'])==64
+        docker('exec',name,'test','-f','/data/ledgers/synthetic_ci/shadow.sqlite')
+        docker('exec',name,'test','!','-e','/data/shadow.sqlite')
         assert first['integrated_seconds']>0 and first['valid_measurements_percent']==100
         assert all(x['timestamp_field']=='last_updated' for x in first['source_diagnostics'].values())
         command=json.loads(docker('inspect','--format','{{json .Config.Cmd}}',name))
@@ -73,6 +77,8 @@ def main():
         docker('start',name)
         final=wait_report(name,second['samples']+1,second['last_sample'])
         check_processes(name)
+        assert final['ledger_id']==first['ledger_id']
+        assert final['sources_digest']==first['sources_digest']
         assert final['samples']>second['samples']
         assert final['integrated_seconds']>=second['integrated_seconds']
         docker('stop','--time','25',name)

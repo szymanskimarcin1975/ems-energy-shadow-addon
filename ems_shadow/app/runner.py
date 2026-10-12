@@ -8,7 +8,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from shadow import Shadow, capture
-from settings import load_sources, fingerprint, ConfigurationError
+from settings import load_sources, load_ledger_id, fingerprint, ConfigurationError
 
 def atomic_report(path, report):
     path = Path(path)
@@ -55,11 +55,13 @@ def make_report(sh, running=True):
                  valid_measurements_percent=100*accepted/(r['samples']+failures) if r['samples']+failures else None,
                  integrated_period_percent=100*r['integrated_seconds']/elapsed if elapsed else None,
                  topology_confirmed=False, cumulative_since_database_creation=True,
-                 source_diagnostics=diagnostics)
+                 source_diagnostics=diagnostics, ledger_id=sh.ledger_id,
+                 sources_digest=sh.sources_digest, addon_version='0.1.2')
         return r
     finally: c.rollback()
 
 def run(data='/data', report='/ha_config/ems_shadow/report.yaml', stop=None, options_path='/data/options.json'):
+    ledger_id=load_ledger_id(options_path)
     sources=load_sources(options_path) # Validate before files/DB/network are touched.
     os.umask(0o077)
     data = Path(data); data.mkdir(parents=True, exist_ok=True)
@@ -69,7 +71,14 @@ def run(data='/data', report='/ha_config/ems_shadow/report.yaml', stop=None, opt
         # capture() appends /api/states; /core is the proxy base, not /core/api.
         os.environ['HA_URL'] = 'http://supervisor/core'
         os.environ['HA_TOKEN'] = os.environ['SUPERVISOR_TOKEN']
-        sh = Shadow(data/'shadow.sqlite')
+        # Never open the legacy database or its WAL/SHM, even for migration.
+        ledger_dir=data/'ledgers'/ledger_id
+        for component in (data/'ledgers',ledger_dir,ledger_dir/'shadow.sqlite'):
+            if component.is_symlink(): raise ConfigurationError('ledger_symlink_refused')
+        ledger_dir.mkdir(parents=True,exist_ok=True)
+        sh = Shadow(ledger_dir/'shadow.sqlite')
+        sh.ledger_id=ledger_id
+        sh.sources_digest=fingerprint(sources)
         digest=fingerprint(sources)
         old=sh.con.execute("SELECT value FROM state WHERE key='sources_digest'").fetchone()
         if (old and old[0]!=digest) or (old is None and sh.report()['samples']):

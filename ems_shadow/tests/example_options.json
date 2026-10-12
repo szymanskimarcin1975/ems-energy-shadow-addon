@@ -7,5 +7,6 @@
     "boiler_kwh": "sensor.example_boiler_energy",
     "heatpump_kwh": "sensor.example_heatpump_energy",
     "workday": "binary_sensor.example_workday"
-  }
+  },
+  "ledger_id": "synthetic_ci"
 }

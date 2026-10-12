@@ -83,7 +83,7 @@ runner.run(sys.argv[2],sys.argv[2]+'/report.yaml',e,options_path=sys.argv[3])
                 p.terminate();self.assertEqual(p.wait(timeout=5),0)
                 r=json.loads((Path(tmp)/'report.yaml').read_text())
                 self.assertFalse(r['running']);self.assertEqual(r['samples'],1)
-                self.assertTrue((Path(tmp)/'shadow.sqlite').exists())
+                self.assertTrue((Path(tmp)/'ledgers'/'synthetic_ci'/'shadow.sqlite').exists())
             finally:
                 if p.poll() is None:p.kill();p.wait()
 

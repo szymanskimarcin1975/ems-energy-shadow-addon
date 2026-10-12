@@ -1,5 +1,5 @@
 FROM python:3.12-slim-bookworm
-LABEL io.hass.name="EMS Energy SHADOW" io.hass.version="0.1.1" io.hass.type="addon" io.hass.arch="amd64"
+LABEL io.hass.name="EMS Energy SHADOW" io.hass.version="0.1.2" io.hass.type="addon" io.hass.arch="amd64"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY app/ /app/
