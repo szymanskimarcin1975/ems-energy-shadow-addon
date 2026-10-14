@@ -1,17 +1,18 @@
-# EMS Energy SHADOW 0.1.1
+# EMS Energy SHADOW
 
-Experimental Home Assistant add-on for amd64. Observes energy without controlling devices.
+Home Assistant addon repository for diagnostic energy observation.
 
-Add this repository URL to the Home Assistant app store:
+The 0.1.3-dev.1 candidate is available only on a preparation branch. Main remains
+unchanged until an explicit release approval. This is experimental software:
+container tests do not establish Home Assistant Supervisor update/rollback safety.
 
-https://github.com/szymanskimarcin1975/ems-energy-shadow-addon
+The observer keeps a private SQLite ledger, validates source quality and records
+measurement gaps without inventing consumption. All seven source entity IDs and
+ledger_id must be configured explicitly; no installation-specific defaults exist.
 
-Install EMS Energy SHADOW, then configure all seven source entities locally before starting. No installation-specific defaults are included.
+Diagnostic export is disabled by default. Starting with the default option does
+not open the export controller database or perform any diagnostic backup. The
+observer necessarily opens its own ledger for normal collection. See
+ems_shadow/DOCS.md for STDIN acknowledgments and separate export authorization.
 
-See [configuration and backup instructions](ems_shadow/DOCS.md).
-
-Source snapshot: `617e523cb4154cece2a6dc16d8db1ae6f222718d`. Add-on files are copied unchanged; no source repository history was transferred.
-
-SQLite remains private in `/data`. Reports are exported to `ems_shadow/report.yaml` in the Home Assistant configuration directory for authorized MCP reads. The add-on therefore requests write access to that directory. It exposes no public ports and uses no embedded credentials.
-
-Build and isolated synthetic container tests passed before this publication. Actual Supervisor installation and real measurement quality still require a test installation. No production billing claims.
+No built Docker images or measurement data are published by CI.

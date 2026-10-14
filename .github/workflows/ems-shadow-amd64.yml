@@ -1,8 +1,8 @@
-name: EMS SHADOW amd64 build and smoke test
+name: EMS SHADOW amd64 build and isolated STDIN tests
 'on':
   push:
-    branches: [main]
-    paths: ['ems_shadow/**', '.github/workflows/ems-shadow-amd64.yml']
+    branches: [main, prepared/stdin-0.1.3-dev.1]
+    paths: ['ems_shadow/**', 'ci/**', '.github/workflows/ems-shadow-amd64.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,13 +13,23 @@ jobs:
   build-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      PYTHONPATH: ems_shadow/app:ems_shadow/app/staging:ems_shadow/app/diagnostic_export
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Python observer tests
+      - name: Privacy and exact observer checks
+        run: python3 ci/privacy_check.py
+      - name: Observer regression tests
         run: python3 -m unittest discover -s ems_shadow/tests -v
-      - name: Build linux/amd64 locally, never push
-        run: docker build --platform linux/amd64 -t ems-shadow:ci ems_shadow
+      - name: Export regression tests with synthetic fixtures
+        run: python3 -m unittest discover -s ems_shadow/app/diagnostic_export -v
+      - name: Controller, gateway and disabled STDIN tests
+        run: python3 ci/stdin/ci_tests.py
+      - name: Build exact addon linux/amd64, never push
+        run: docker build --platform linux/amd64 -t ems-shadow:published ems_shadow
+      - name: Test image extends exact addon without replacing runtime code
+        run: docker build --platform linux/amd64 -t ems-shadow:ci -f ci/Dockerfile.test .
       - name: Isolated synthetic container smoke test
-        run: python3 ems_shadow/tests/container_smoke.py
+        run: python3 ci/stdin/container_smoke.py

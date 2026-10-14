@@ -1,87 +1,68 @@
-# EMS Energy SHADOW 0.1.0 — wersja publikacyjna
+# EMS Energy SHADOW 0.1.3-dev.1
 
-Dodatek eksperymentalny amd64. Odczytuje wyłącznie stany HA, bez wywołań usług,
-MQTT i sterowania. Python3.12, polling20s, osobny obserwator i nadzorca.
+## Identity and persistent data
 
-## Ustawienia wymagane
+Keep the same repository and addon slug ems_energy_shadow during an update.
+Supervisor manages persistent /data. Do not uninstall the addon to update it.
+Preserve ledger_id and all seven source options. Defaults remain empty and must
+never replace saved settings. SQLite schema and observer computation code are
+unchanged from 0.1.2. Observer report addon_version remains 0.1.2 (code version);
+Supervisor metadata and Docker label identify the package as 0.1.3-dev.1.
 
-Wypełnij sources w konfiguracji dodatku lokalnymi encjami. Publiczne wartości
-są puste. Neutralny przykład jest w tests/example_options.json.
+## Disabled export
 
-| Opcja | Wymagany pomiar |
-|---|---|
-| inverter_w | Moc AC falownika W, z uwzględnieniem magazynu po stronie AC |
-| grid_kw | Wymiana z siecią kW: dodatnia eksport, ujemna import |
-| boiler_w | Moc całej kotłowni W, nieujemny pobór |
-| heatpump_w | Moc pompy W, podkategoria kotłowni |
-| boiler_kwh | Narastająca energia kotłowni kWh |
-| heatpump_kwh | Narastająca energia pompy kWh |
-| workday | binary_sensor: on dzień roboczy, off dzień wolny; kalendarz PL |
+The option diagnostic_export_enabled defaults to false. The gateway starts the
+observer first. A separate lightweight STDIN reader acknowledges rejected export
+requests without opening SQLite or creating export directories. No export service
+or controller database is opened. The reader only reads /data/options.json.
+Its failure does not terminate the observer. No receiver auto-restart or request
+replay occurs.
 
-Brak ustawień, błędny domain lub duplikaty blokują start przed DB/API.
-Nie ma domyślnych źródeł ani wyszukiwania podobnych encji. Istnienie i znaczenie
-źródeł trzeba potwierdzić lokalnie. Niedostępne dane nie stają się zerami.
-Zmiana źródeł przy istniejącej bazie jest blokowana. Starsza baza bez odcisku
-źródeł również wymaga osobnego planu migracji, jeśli zawiera próbki.
+Requests are JSON objects terminated by newline with exactly these keys:
+operation (diagnostic_export), request_id (8-64 ASCII letters/digits/_/-), ledger_id,
+expires_at (timezone-aware future time, at most 300 seconds), start and end
+(timezone-aware instants exactly 24 hours apart, end not in the future).
 
-## Obserwacja i dane
+A received valid request produces a JSON log acknowledgment containing
+component=diagnostic_stdin, status=REJECTED, reason=export_disabled, request_id,
+received=true, export_enabled=false and repeated. Duplicate requests remain
+rejected; repeated tracks only the last 1024 valid IDs in RAM. Invalid/oversized/
+incomplete messages have fixed rejection reasons; unvalidated IDs are not echoed.
+Maximum message length is 4096 UTF-8 bytes. EOF closes only the reader.
 
-Budynek = moc AC falownika - wymiana z siecią; dom=budynek-kotłownia.
-Pompa nie jest dodawana ponownie. Warunek fizyczny: źródła w zgodnym zakresie.
-Kontrola świeżości i synchronizacji, bez całkowania przez niewiarygodne luki.
-G13 Europe/Warsaw: lato19–22 droga, zima16–21 droga;7–13 średnia;
-pozostałe godziny oraz dni wolne tania. Brak Workday wyklucza wiarygodne
-przypisanie. To zużycie odbiorników, nie koszt energii zakupionej z sieci.
+Supervisor/API success alone is not an application acknowledgment. Missing
+correlated acknowledgment means an unknown transport/reader outcome. Do not
+automatically resend or enable export to investigate a missing acknowledgment.
+The first real Supervisor test must leave export disabled.
 
-SQLite prywatna/data/shadow.sqlite, WAL+FULL, lock jednej instancji.
-Nadzorca ponawia po awarii10s; stopSIGTERM nie ponawia. Błędna konfiguracja
-kończy uruchomienie zkodem78. Nie jest to watchdog zawieszonego procesu.
-backup:cold zatrzymuje dodatek podczas kopii. Zachować kopię przed usunięciem.
-Raport ems_shadow/report.yaml w katalogu konfiguracji HA jest odczytywalny
-przez MCP get_config_file po włączeniu dostępu do konfiguracji. Brak portów
-publicznych. W raporcie nie ma identyfikatorów źródeł, tokenów ani surowych stanów.
-Sprawdzać generated_at; running samodzielnie nie potwierdza świeżości.
+## Explicitly enabled export (separate decision)
 
-## Uprawnienia i instalacja testowa
+Enabling the option starts an isolated controller, but does not itself export a
+ledger. Only a validated explicit request can reserve a diagnostic export. Source
+SQLite is opened mode=ro through Online Backup; SQLite read coordination can affect
+SHM. No source checkpoint, VACUUM, reset or migration is performed. Full snapshots
+stay in private /data/diagnostic_exports; only allowlisted quality aggregates go to
+the existing configuration report directory. Tokens are removed from worker env.
+Request IDs are persisted, simultaneous exports refused, interrupted requests become
+UNKNOWN and block new exports until reviewed; no automatic replay. Export quota
+is three lifetime requests in the control ledger, with a 60-second cooldown.
 
-homeassistant_api umożliwia technicznie szersze API; kod wykonuje tylkoGET.
-Mount konfiguracji HA jest rw dla eksportu raportu; kod zapisuje tylko raport,
-lecz uprawnienie kontenera nie jest ograniczone do podkatalogu.
-Nie wpisywać sekretów do repozytorium ani parametrów adresu repozytorium.
-Supervisor przekazuje token w środowisku, bez ręcznego wpisywania.
+Worker RAM/WAL/disk and observer freshness checks are safeguards, not proof of
+negligible impact. Shared container resource exhaustion can still affect collection.
+Do not use diagnostic sampled energy as billing or approved training data until
+measurement topology and coverage are independently validated.
 
-Po zatwierdzeniu: kopia HA, instalacja jednej kopii dodatku, uzupełnienie sources,
-start, kontrola logów/raportu po kilku minutach i po1h. Obserwacja24–48h.
-Nie uruchamiać produkcyjnych liczników bez potwierdzenia topologii i jakości.
-Wycofanie: stop, wyłączyć autostart, backup dodatku, dopiero odinstalowanie.
-Nie resetować istniejących statystyk.
+## Shutdown and updates
 
+SIGTERM/SIGINT signal observer and sidecar process groups together. Cooperative
+stop budget is 15 seconds, followed by kill and a 2-second reap check. Supervisor
+timeout is 30 seconds. Unconfirmed shutdown produces UNKNOWN and does not spawn a
+replacement. Kernel-blocked I/O cannot be guaranteed immediately killable.
 
-## 0.1.2 — jawny, oddzielny rejestr
-
-Wymagane ustawienie `ledger_id`, np. `corrected_sources_20261012`.
-Dozwolone: małe litery, cyfry, `_`, `-`, pierwsza litera, do 64 znaków.
-Pusta wartość, `legacy` i `shadow` są niedozwolone: obserwacja pozostaje wyłączona.
-Nie ma automatycznej migracji ani automatycznego wyboru innego rejestru.
-
-Baza: `/data/ledgers/<ledger_id>/shadow.sqlite`; odcisk siedmiu źródeł
-jest przechowywany osobno w każdej bazie. Zmiana źródeł w tym samym rejestrze
-nadal blokuje start. Nowy rejestr zaczyna od próbki bazowej, bez historii i
-bez naliczania energii za przestój. Restart z tym samym ID kontynuuje dane.
-Globalna blokada `/data/observer.lock` obejmuje wszystkie identyfikatory.
-Stara `/data/shadow.sqlite` oraz WAL/SHM nie są otwierane, modyfikowane ani usuwane.
-
-Raport `ems_shadow/report.yaml` dotyczy wyłącznie aktualnie wybranego rejestru:
-`ledger_id`, `sources_digest`, `addon_version`, `generated_at` jednoznacznie
-określają pochodzenie. Nie łączy wyników rejestrów. Po nieudanym starcie może
-pozostać stary raport: zawsze sprawdzaj wersję, ID i czas. Bazy innych rejestrów
-pozostają dostępne do późniejszej analizy, ale raport aktywny je zastępuje.
-
-Aktualizacja dopiero po zgodzie na publikację i wdrożenie:
-zatrzymać dodatek, wykonać zimną kopię dodatku wraz z całym `/data`, opcjami i
-raportem; użyć aktualizacji zamiast odinstalowania. Zachować siedem źródeł,
-wpisać jawne nowe ID. Przed startem zweryfikować ustawienia. Po osobnej zgodzie
-na start sprawdzić ID/digest, świeżość, baseline i jakość raportu.
-Cofnięcie: zatrzymać, zachować także nowy `/data` i raport; przywrócić zimną
-kopię 0.1.1 wraz z jej opcjami. Nie usuwać nowych rejestrów. 0.1.1 może nadal
-blokować start przy pierwotnej niezgodności źródeł — rollback nie usuwa przyczyny.
+Before a controlled update, create and verify a fresh addon backup and retain an
+external copy. backup:cold interrupts collection; require explicit permission.
+Mark the resulting gap; never backfill it with zero energy. Returning to observer
+code 0.1.2 in a separately approved higher-version recovery package is not an exact
+old-image restoration. Do not restore older SQLite automatically. Recovery package
+0.1.4-recovery.1 is not published by this candidate. Full Supervisor update/recovery
+has not been tested; standalone container tests do not replace that prerequisite.

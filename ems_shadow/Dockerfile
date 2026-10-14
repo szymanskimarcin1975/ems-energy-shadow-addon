@@ -1,8 +1,6 @@
 FROM python:3.12-slim-bookworm
-LABEL io.hass.name="EMS Energy SHADOW" io.hass.version="0.1.2" io.hass.type="addon" io.hass.arch="amd64"
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-WORKDIR /app
+LABEL io.hass.type="addon" io.hass.version="0.1.3-dev.1" io.hass.arch="amd64"
+ENV PYTHONPATH=/app PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY app/ /app/
-COPY tests/ /tests/
-RUN python3 -m unittest discover -s /tests -v
-CMD ["python3", "supervise.py"]
+WORKDIR /app
+CMD ["python", "/app/staging/gateway.py"]
