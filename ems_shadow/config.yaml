@@ -1,9 +1,9 @@
 name: EMS Energy SHADOW
-version: 0.1.3-dev.1
+version: 0.1.4-observation.2
 slug: ems_energy_shadow
 description: Read-only energy observation with a private SQLite ledger
 arch:
-  - amd64
+- amd64
 startup: application
 boot: auto
 backup: cold
@@ -16,20 +16,42 @@ homeassistant_api: true
 hassio_api: false
 host_network: false
 map:
-  - type: homeassistant_config
-    read_only: false
-    path: /ha_config
+- type: homeassistant_config
+  read_only: false
+  path: /ha_config
 options:
   diagnostic_export_enabled: false
-  ledger_id: ""
+  ledger_id: ''
   sources:
-    inverter_w: ""
-    grid_kw: ""
-    boiler_w: ""
-    heatpump_w: ""
-    boiler_kwh: ""
-    heatpump_kwh: ""
-    workday: ""
+    inverter_w: ''
+    grid_kw: ''
+    boiler_w: ''
+    heatpump_w: ''
+    boiler_kwh: ''
+    heatpump_kwh: ''
+    workday: ''
+  observation:
+    enabled: false
+    solar_sources:
+      m1_import: ''
+      m1_export: ''
+      ac_power: ''
+      b1_power: ''
+      b1_soc: ''
+      b1_status: ''
+      b1_import: ''
+      b1_export: ''
+      cloud_production: ''
+    weather:
+      local_entity: ''
+      weather_entity: ''
+      max_ha_age_seconds: 900
+      jump_c_per_hour: 10
+      min_jump_interval_seconds: 60
+    boiler_sources:
+      power: ''
+      energy: ''
+      workday: ''
 schema:
   diagnostic_export_enabled: bool
   ledger_id: str
@@ -41,3 +63,25 @@ schema:
     boiler_kwh: str
     heatpump_kwh: str
     workday: str
+  observation:
+    enabled: bool
+    solar_sources:
+      m1_import: str
+      m1_export: str
+      ac_power: str
+      b1_power: str
+      b1_soc: str
+      b1_status: str
+      b1_import: str
+      b1_export: str
+      cloud_production: str
+    weather:
+      local_entity: str
+      weather_entity: str
+      max_ha_age_seconds: float
+      jump_c_per_hour: float
+      min_jump_interval_seconds: float
+    boiler_sources:
+      power: str
+      energy: str
+      workday: str

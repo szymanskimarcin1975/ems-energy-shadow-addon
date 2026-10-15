@@ -1,7 +1,0 @@
-__pycache__
-**/__pycache__
-*.sqlite*
-*.db
-*.log
-options.json
-.git
