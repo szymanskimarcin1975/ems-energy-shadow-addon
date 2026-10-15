@@ -1,0 +1,20 @@
+{
+  ".dockerignore": "862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793",
+  "config.yaml": "0bf5548ae09d767a347b29b5fed79bc360362a59167ed115f67d72eea9d763ea",
+  "Dockerfile": "3566a163df3cd1db8e032461825edaf053ae0e777d7b6fcb26fb542abda27a03",
+  "app/runner.py": "0f3346a468f759a7c7dbc6c923fddcaac5ce8994de486ec0596c0de105827455",
+  "app/supervise.py": "a12a75c3d3b0054d2faab60fb18d64faf28a038207bf680fc5de0d806d6a65dc",
+  "app/engine.py": "2cfd36acb99097e20d9d5b57bd0dc1c18ae371a0dbdcf4068f58071420fe65fa",
+  "app/settings.py": "823b522131dad90e0cb223e750c5abc3f998d26fa2c2cd04638bc37385f3b7e9",
+  "app/shadow.py": "4348f00aea9a8abe711803de85d804ad7ed3f23e0d5bff8a240c2e786078abdc",
+  "tests/test_supervise.py": "3818f09a890317826f7f7fa4fe340270b8faceaa6b22573a6a986816a5ca6721",
+  "tests/example_options.json": "c7e540e525c82e0eb60215f5a09ee8020c5d2c2e89f3ea25e647476b24711be4",
+  "tests/test_publication.py": "b4e3b0dffd78f6e5b3051372f0d821380c3fd0bb0b13e0bc22b10719a633b635",
+  "tests/test_timestamps.py": "e22bc32acf8fa04b7479f482b3dc605a24388b0be4b9e3896e4dcaed639c2229",
+  "tests/container_smoke.py": "78f0e0838df9014f4c65f4ea25e01ff0499ccd9502b2d4dbae1293a7f9ecbf4f",
+  "tests/test_settings.py": "aecc1e626bffc57285221014cce959547ba9f9e7caa1e2646c374f2edd2ba3da",
+  "tests/test_ledgers.py": "d5b120e280c502800a0902464f3aaa282a0640f1621e6edfa473146fed5a4c4e",
+  "tests/test_runner.py": "7053bc618c34574ca684465c80eacb4668f129b66e67eea3ee2f177052ab6cd0",
+  "tests/mock_api.py": "ba4886397c34eb7f05be5b8362f1d38f89e54206db0ecf22333080fcf7fcb7b3",
+  "tests/test_process_listing.py": "e1720b642927b82355cfd89ffa1853d8b2abd07b74d5bdd7d8cd0b4257cfcac3"
+}
