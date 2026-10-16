@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory() as tmp:
   assert report['inputs']['b1_status']['memory_quality']=='HA_WRITE_RECENT_DEVICE_TIME_UNCONFIRMED'
   assert report['policy']['soc_min'] is None and report['policy']['soc_max'] is None
   heartbeat=json.loads((data/'observation-v1/battery-heartbeat.json').read_text())
-  assert heartbeat['completed_cycles']==2 and heartbeat['committed_cycles']==0
+  assert heartbeat['completed_cycles']==2 and heartbeat['committed_cycles']==2
   dbs=list(data.rglob('*.sqlite'));assert {p.name for p in dbs}=={'battery-ownership.sqlite','battery-execution.sqlite'}
   assert report['execution_service']['executor_initialized'] is True
   assert report['execution_service']['requested_mode']=='READ_ONLY'

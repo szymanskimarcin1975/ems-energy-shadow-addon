@@ -109,7 +109,7 @@ def main():
     options=json.loads(Path(a.options).read_text()).get('observation',{})
     if options.get('enabled') is not True:return 78
     sources=options.get('solar_sources',{});api=ReadAPI(os.environ['SUPERVISOR_TOKEN'])
-    stop=threading.Event();seq=0;root=Path(a.root);root.mkdir(parents=True,exist_ok=True)
+    stop=threading.Event();seq=0;commits=0;root=Path(a.root);root.mkdir(parents=True,exist_ok=True)
     ownership=Ownership(root/'battery-ownership.sqlite',sources)
     service=None
     try:service=BatteryService(root,ownership,os.environ['SUPERVISOR_TOKEN'])
@@ -131,6 +131,7 @@ def main():
                 if report['bms']['sources']['status']['state'] not in {'B_STATUS_STANDBY','B_STATUS_IDLE','B_STATUS_CHARGE','B_STATUS_DISCHARGE'}:report['blockers'].append('BMS_STATUS_NOT_APPROVED_FOR_ACTUATION')
             try:
                 report['execution_service']=service.cycle(read_config(),profile) if service else {'executor_initialized':False,'effective_state':'INITIALIZATION_ERROR','actuation_policy_enabled':False}
+                if report['execution_service'].get('executor_initialized') is True:commits+=1
             except Exception:report['execution_service']={'executor_initialized':False,'effective_state':'EXECUTION_ERROR','actuation_policy_enabled':False,'delivery_uncertain':True}
             execution=report['execution_service']
             report['mode']=execution.get('requested_mode','READ_ONLY')
@@ -152,7 +153,7 @@ def main():
         report.setdefault('status_semantics','snapshot; after valid_until process state is UNKNOWN')
         try:atomic(a.report,report)
         except OSError:print('battery_readiness_report_write_failed',flush=True)
-        atomic(root/'battery-heartbeat.json',{'pid':os.getpid(),'sequence':seq,'phase':'completed','completed_cycles':seq,'committed_cycles':0,'status':report['state'],'captured_at':datetime.now(timezone.utc).isoformat()})
+        atomic(root/'battery-heartbeat.json',{'pid':os.getpid(),'sequence':seq,'phase':'completed','completed_cycles':seq,'committed_cycles':commits,'status':report['state'],'captured_at':datetime.now(timezone.utc).isoformat()})
         if a.cycles and seq>=a.cycles:break
         stop.wait(a.interval)
     if service:
