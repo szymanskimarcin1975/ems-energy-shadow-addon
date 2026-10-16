@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from weather_demand import local_temperature, forecast_temperature, predict, stamp, number
+from cold_baseline import baseline
 from worker import ReadAPI, states_by_id, atomic
 from boiler_offline.g13 import tariff
 
@@ -99,6 +100,8 @@ class Store:
         rows=[json.loads(r[0]) for r in self.c.execute('SELECT record FROM training ORDER BY id')]
         target=(stamp(at)+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
         # No invented future workday/holiday state. Emit both scenarios independently.
+        recent=[json.loads(r[0]) for r in self.c.execute('SELECT record FROM captures ORDER BY id DESC LIMIT 181')][::-1]
+        persistence=baseline(recent,at)
         result={'issued_at':at,'control_enabled':False,'billing_approved':False,'horizon':[]}
         for i in range(24):
             t=target+timedelta(hours=i)
@@ -106,8 +109,12 @@ class Store:
             scenarios={d:predict(rows,at,t.astimezone(ZONE).hour,d,value) for d in ('workday','nonworkday')}
             result['horizon'].append({'valid_for':t.isoformat(),'forecast_temperature_c':value,'scenarios':scenarios,
                 'g13_scenarios':{'workday':tariff(t,'on'),'nonworkday':tariff(t,'off')}})
+        for h in result['horizon']:
+            for d,p in h['scenarios'].items():
+                if p['prediction_kwh'] is None and persistence['prediction_kwh'] is not None:
+                    h['scenarios'][d]=dict(persistence,forecast_temperature_c=h['forecast_temperature_c'],target='boiler',training_days=p['training_days'])
         result['training_rows']=len(rows)
-        result['status']='advisory_uncalibrated' if any(p['temperature_used'] for h in result['horizon'] for p in h['scenarios'].values()) else 'insufficient_data'
+        result['status']='advisory_uncalibrated' if any(p['temperature_used'] for h in result['horizon'] for p in h['scenarios'].values()) else ('persistence_baseline_uncalibrated' if persistence['prediction_kwh'] is not None else 'insufficient_data')
         self.c.execute('INSERT OR IGNORE INTO predictions VALUES(?,?)',(at,json.dumps(result,allow_nan=False)))
         return result
 
@@ -149,7 +156,7 @@ def main():
                 report={'generated_at':at,'valid_until':(stamp(at)+timedelta(seconds=45)).isoformat(),'status':prediction['status'],'capture_quality':quality,
                     'captures':store.c.execute('SELECT COUNT(*) FROM captures').fetchone()[0],
                     'training_rows':prediction['training_rows'],'predictions':store.c.execute('SELECT COUNT(*) FROM predictions').fetchone()[0],
-                    'source_fingerprint':store.fingerprint,'model_version':'weather-neighbours-v1',
+                    'source_fingerprint':store.fingerprint,'model_version':'weather-neighbours-v1+persistence-v1',
                     'control_enabled':False,'horizon':prediction['horizon']}
                 atomic('/ha_config/ems_shadow/demand_report.yaml',report)
             except (OSError,ValueError,KeyError,TypeError):
