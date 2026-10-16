@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      PYTHONPATH: ems_shadow/app:ems_shadow/app/staging:ems_shadow/app/diagnostic_export
+      PYTHONPATH: ems_shadow/app/observation:ems_shadow/app:ems_shadow/app/staging:ems_shadow/app/diagnostic_export
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -23,6 +23,8 @@ jobs:
         run: python3 ci/privacy_check.py
       - name: Observer regression tests
         run: python3 -m unittest discover -s ems_shadow/tests -v
+      - name: Advisory planner and approved SOC profile regression
+        run: python3 -m unittest discover -s ci/weather_demand -v
       - name: Export regression tests with synthetic fixtures
         run: python3 -m unittest discover -s ems_shadow/app/diagnostic_export -v
       - name: Controller, gateway and disabled STDIN tests
