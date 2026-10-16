@@ -1,5 +1,7 @@
 import json,sqlite3,tempfile,unittest,subprocess,sys
 from pathlib import Path
+from unittest.mock import patch
+from collections import namedtuple
 from datetime import datetime,timedelta,timezone
 from planning_runtime import Planner,plan
 T=datetime(2026,10,16,4,tzinfo=timezone.utc)
@@ -39,6 +41,12 @@ class Tests(unittest.TestCase):
   a=list(fixture());a[3]['legacy_controller_entities']=['automation.example_old']
   a[0]['automation.example_old']={'state':'on'}
   r=plan(*a);self.assertEqual(r['active_control_readiness']['legacy_controllers']['automation.example_old'],'on');self.assertFalse(r['control_enabled'])
+ def test_disk_guard_blocks_quality_writes_too(self):
+  with tempfile.TemporaryDirectory() as d:
+   s=Planner(Path(d)/'test.sqlite');states,_,at,_,options=fixture()
+   with patch('planning_runtime.shutil.disk_usage',return_value=namedtuple('Usage','total used free')(100,100,0)):
+    with self.assertRaises(OSError):s.observe(states,at,options)
+   self.assertEqual(s.c.execute('select count(*) from balance_checks').fetchone()[0],0);s.c.close()
  def test_missing_soc(self):
   a=list(fixture());del a[0]['sensor.example_b1_soc'];r=plan(*a);self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertEqual(r['decisions'],[])
  def test_missing_load(self):
