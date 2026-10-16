@@ -12,7 +12,7 @@ from boiler_offline.g13 import tariff,ZONE
 def value(states,entity,unit,at,age=240):
     s=states[entity]
     if s.get('attributes',{}).get('unit_of_measurement')!=unit:raise ValueError('unit_mismatch')
-    if not 0<=(stamp(at)-stamp(s['last_reported'])).total_seconds()<=age:raise ValueError('stale_or_future_input')
+    if not 0<=(stamp(at)-stamp(s['last_reported'])).total_seconds()<=age:raise ValueError('stale_or_future_input:'+entity)
     return number(s['state'])
 
 def plan(states,prediction,at,config,options):
@@ -31,9 +31,17 @@ def plan(states,prediction,at,config,options):
                     'battery_charge_w':max(battery,0),'battery_discharge_w':max(-battery,0),
                     'actual_pv_production_w':None,'battery_status':states.get(solar['b1_status'],{}).get('state')}
         soc=value(states,solar['b1_soc'],'%',at)
-        capacity=value(states,config['capacity_entity'],'kWh',at)
-        charge=value(states,config['charge_limit_entity'],'W',at)/1000
-        discharge=value(states,config['discharge_limit_entity'],'W',at)/1000
+        # These are descriptive capacity/power ratings, not live power or SOC.
+        # Do not pretend that a constant rating is a fresh device measurement.
+        def rating(key,unit):
+            raw=states[config[key]]
+            if raw.get('attributes',{}).get('unit_of_measurement')!=unit:raise ValueError('rating_unit:'+key)
+            return number(raw['state'])
+        capacity=rating('capacity_entity','kWh')
+        charge=rating('charge_limit_entity','W')/1000
+        discharge=rating('discharge_limit_entity','W')/1000
+        r['rating_quality']='HA_METADATA_SNAPSHOT_NOT_DYNAMIC_MEASUREMENT'
+        r['rating_timestamps']={key:{k:states[config[key]].get(k) for k in ('last_reported','last_updated','last_changed')} for key in ('capacity_entity','charge_limit_entity','discharge_limit_entity')}
         if not 0<capacity<=30 or not 0<=soc<=100 or not 0<=charge<=15 or not 0<=discharge<=15:raise ValueError('outside_simulation_limits')
         minimum=number(config['simulation_min_soc_percent'])
         ce,de=number(config['simulation_charge_eff']),number(config['simulation_discharge_eff'])
