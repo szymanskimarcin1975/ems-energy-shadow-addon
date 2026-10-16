@@ -1,6 +1,6 @@
 # Battery executor candidate — not an activated controller
 
-The new module is an importable real Home Assistant API actuator, not a scheduled runtime. No release version or gateway entrypoint changed. Defaults: enabled=false, soc_min=null, soc_max=null, soc_bounds_approved=false. Disabled calls never access HA, SQLite or lock files.
+The executor module is an importable Home Assistant API actuator, not an activated actuator runtime. Observation.13 schedules a separate supervised battery_runtime.py readiness worker. That worker has its own GET-only transport, never constructs the actuator transport, never opens a SQLite ledger, and publishes battery_executor_report.yaml in the existing private report directory. It cannot send device commands. Defaults: enabled=false, soc_min=null, soc_max=null, soc_bounds_approved=false. Disabled calls never access HA, SQLite or lock files.
 
 Rated energy 9200 Wh and configured power ceilings 5000 W are not BMS SOC limits or proof of current dynamic power allowance. Operating SOC limits need explicit operator approval and manufacturer compatibility verification.
 
@@ -12,4 +12,4 @@ Only Charge from Solar Power and Discharge to Minimize Import are allowed. Disch
 
 Remote timeout/default-mode configuration must be read and independently verified on the actual inverter. Do not deliberately let a live command expire while another controller owns the battery. No protection claims against unvalidated fallback behavior, arbitrary privileged writers, host failures, or BMS limits not exposed by HA.
 
-Activation NO-GO: runtime scheduling/guard watchdog, durable external ownership, real fallback validation and explicit SOC approval are not complete. Container CI is not a Supervisor handover test. Current observers and CWU remain unaffected. Rollback before activation is code-only because candidate is not imported by runtime. No historical SQLite restoration is required.
+Active-control NO-GO: actuator scheduling/guard watchdog, durable external ownership, real fallback validation and explicit SOC approval are not complete. The read-only readiness worker is supervised by the existing identity/progress guard. SetApp access is not required for read-only installation; manufacturer-specific limits not exposed by HA must be obtained from documented device interfaces or the installer before active control. Container CI is not a Supervisor handover test. Current observers and CWU remain unaffected. Rollback before activation is code-only because candidate is not imported by runtime. No historical SQLite restoration is required.
