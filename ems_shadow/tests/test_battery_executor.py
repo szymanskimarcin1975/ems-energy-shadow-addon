@@ -40,3 +40,22 @@ class Tests(unittest.TestCase):
   self.ha.ack=False;self.assertEqual(self.run_command(self.executor()),'UNKNOWN')
  def test_nonfinite_soc(self):
   self.ha.soc=float('nan');self.assertEqual(self.run_command(self.executor()),'INVALID_SOC')
+ def test_soc_ceiling_blocks_charge(self):
+  self.ha.soc=90;self.assertEqual(self.run_command(self.executor()),'SOC_CEILING');self.assertEqual(self.ha.calls,[])
+ def test_unknown_survives_reopen(self):
+  self.ha.fail=True;self.assertEqual(self.run_command(self.executor()),'UNKNOWN')
+  self.ha.fail=False;self.assertEqual(self.run_command(self.executor(),'after_restart'),'UNKNOWN_REQUIRES_RECONCILIATION')
+ def test_missing_soc_limits(self):
+  self.assertEqual(self.run_command(self.executor(replace(self.p,soc_min=None))),'INVALID_SOC_LIMITS')
+ def test_transport_exception_has_no_original_secret(self):
+  from battery_executor import SupervisorHA
+  from unittest.mock import patch
+  import traceback
+  with patch('urllib.request.urlopen',side_effect=RuntimeError('synthetic-secret')):
+   try:SupervisorHA('example').state('sensor.example_soc')
+   except RuntimeError as e:
+    text=''.join(traceback.format_exception(e));self.assertNotIn('synthetic-secret',text);self.assertIn('ha_transport_error',text)
+ def test_sqlite_failure_before_intent_sends_no_command(self):
+  x=self.executor();x.db=Path(self.tmp.name)/'missing'/'db.sqlite'
+  with self.assertRaises(sqlite3.OperationalError):self.run_command(x)
+  self.assertEqual(self.ha.calls,[])
