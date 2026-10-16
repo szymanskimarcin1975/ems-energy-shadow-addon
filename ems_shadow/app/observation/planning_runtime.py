@@ -5,6 +5,7 @@ import hashlib,json,sqlite3,shutil
 from datetime import timedelta
 from pathlib import Path
 from soc_profile import load_profile,planning_policy
+from household_advisory import schedule as household_schedule
 from weather_demand import stamp,number
 from building_balance import inspect
 from balance_quality import Quality
@@ -136,12 +137,23 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
         r['pv_forecast_issued_at']=issued.isoformat()
     except (KeyError,TypeError,ValueError,OverflowError) as exc:
         r['status']='BLOCKED_INPUT';r['reason']=type(exc).__name__+':'+str(exc)[:100];r['decisions']=[];r['building_decisions']=[]
-    r['current_plan_usable_for_simulation']=(r['status']=='HYPOTHETICAL_SCHEDULE_READY' and input_safety is not None and input_safety.get('current_ha_set_valid') is True)
+    # Household advisory scheduling must not depend on boiler model maturity.
+    # This is a conditional forecast, never a measurement or actuation approval.
+    try:
+        if not scope_confirmed:raise ValueError('m1_scope_unconfirmed')
+        house=household_schedule(states,at,config,options,building_profile,input_safety,approved_planning)
+        r['household_advisory']=house
+        r['building_decisions']=house['decisions']
+        r['status']='ADVISORY_HOUSEHOLD_SCHEDULE_READY'
+        r['boiler_forecast_blocker']=r.pop('reason',None)
+    except (KeyError,TypeError,ValueError,OverflowError) as exc:
+        r['household_advisory']={'status':'BLOCKED','reason':type(exc).__name__+':'+str(exc)[:100],'control_enabled':False}
+    r['current_plan_usable_for_simulation']=(r['status'] in ('HYPOTHETICAL_SCHEDULE_READY','ADVISORY_HOUSEHOLD_SCHEDULE_READY') and input_safety is not None and input_safety.get('current_ha_set_valid') is True)
     return r
 
 def refresh_plan_report(planner,at):
     result=dict(planner.last_report,balance_quality=planner.quality.summary(at),input_safety=planner.safety.summary(at),quality_updated_at=at)
-    usable=(result['input_safety']['current_ha_set_valid'] and stamp(at)<=stamp(result['valid_until']) and result.get('status')=='HYPOTHETICAL_SCHEDULE_READY')
+    usable=(result['input_safety']['current_ha_set_valid'] and stamp(at)<=stamp(result['valid_until']) and result.get('status') in ('HYPOTHETICAL_SCHEDULE_READY','ADVISORY_HOUSEHOLD_SCHEDULE_READY'))
     result['current_plan_usable_for_simulation']=usable
     if not usable:result.update(status='SUSPENDED_INPUT_QUALITY_OR_EXPIRED',decisions=[],building_decisions=[])
     return result
