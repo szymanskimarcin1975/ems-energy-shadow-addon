@@ -19,7 +19,7 @@ class API(http.server.BaseHTTPRequestHandler):
    assert 'last_reported' in payload['template']
    now=datetime.now(timezone.utc);states,_,at,_,_=fixture(now)
    states.update({'sensor.example_temperature':dict(state='8',attributes={'unit_of_measurement':'°C'},last_reported=at),'sensor.example_energy':dict(state='100.3',attributes={'unit_of_measurement':'kWh'},last_reported=at)})
-   rows={e:dict(state=v['state'],unit=v.get('attributes',{}).get('unit_of_measurement'),last_reported=at,last_updated=at,last_changed=at) for e,v in states.items() if e.startswith('sensor.example_')}
+   rows={e:dict(state=v['state'],unit=v.get('attributes',{}).get('unit_of_measurement'),last_reported=at,last_updated=at,last_changed=at) for e,v in states.items() if e.startswith('sensor.example_') and json.dumps(e) in payload['template']}
    # Mimic the precise constrained template entity selection.
    rows={e:v for e,v in rows.items() if json.dumps(e) in payload['template']}
    self.send_response(200);self.end_headers();self.wfile.write(json.dumps(rows).encode());return
