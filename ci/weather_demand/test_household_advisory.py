@@ -38,7 +38,7 @@ class HistoryTests(unittest.TestCase):
    with patch('household_advisory.HISTORY_PATH',p):self.assertIsNone(load_history())
 class IntegratedTests(unittest.TestCase):
  def run_plan(self,peak=0,local_pv=False):
-  a=list(fixture());a[3]['m1_scope_evidence']=dict(scope='whole_building_grid_exchange',confirmed_by='installation_owner',confirmed_at=(T-timedelta(days=1)).isoformat())
+  a=list(fixture());a[3]['household_history_enabled']=True;a[3]['m1_scope_evidence']=dict(scope='whole_building_grid_exchange',confirmed_by='installation_owner',confirmed_at=(T-timedelta(days=1)).isoformat())
   a[3]['bms_peak_charge_entity']='sensor.example_peak';a[0]['sensor.example_peak']=dict(state=str(peak),attributes={'unit_of_measurement':'W'})
   if local_pv:
    from zoneinfo import ZoneInfo
