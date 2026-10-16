@@ -22,6 +22,10 @@ class Tests(unittest.TestCase):
   self.assertFalse(self.q.summary(at)['ready'])
  def test_stale_and_skew(self):
   s,_,at,_,o=fixture();s['sensor.example_grid']['last_reported']=(T-timedelta(seconds=500)).isoformat();self.q.observe(s,at,o);self.assertEqual(self.q.summary(at)['unique_ha_snapshots'],0)
+ def test_all_reasons_kept(self):
+  s,_,at,_,o=fixture();s['sensor.example_ac_power']['last_reported']=(T+timedelta(seconds=30)).isoformat();s['sensor.example_grid']['last_reported']=(T-timedelta(seconds=500)).isoformat()
+  self.q.observe(s,at,o);r=self.q.summary(at)['rejection_reason_counts_30m']
+  self.assertEqual(r['FUTURE_AC'],1);self.assertEqual(r['STALE_M1'],1);self.assertEqual(r['HA_SKEW'],1)
  def test_rollback_no_partial(self):
   s,_,at,_,o=fixture();self.c.execute('pragma query_only=ON')
   with self.assertRaises(sqlite3.Error):self.q.observe(s,at,o)
