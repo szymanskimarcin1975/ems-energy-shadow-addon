@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory() as tmp:
  try:
   run('network','create','--internal',network)
   run('run','-d','--name',api,'--network',network,'--network-alias','supervisor','--entrypoint','python','ems-shadow:ci','/tests/mock_api.py')
-  run('run','--rm','--user',str(os.getuid())+':'+str(os.getgid()),'--network',network,'-v',str(data)+':/data','-v',str(ha)+':/ha_config','-e','SUPERVISOR_TOKEN=synthetic','--entrypoint','python','ems-shadow:ci','/app/observation/battery_runtime.py','--cycles','2','--interval','.1')
+  run('run','--rm','--user',str(os.getuid())+':'+str(os.getgid()),'--network',network,'-v',str(data)+':/data','-v',str(ha)+':/ha_config','-e','SUPERVISOR_TOKEN=synthetic','--entrypoint','python','ems-shadow:ci','/app/battery_runtime.py','--cycles','2','--interval','.1')
   report=json.loads((ha/'ems_shadow/battery_executor_report.yaml').read_text())
   assert report['mode']=='READ_ONLY' and report['state']=='BLOCKED'
   assert report['commands_enabled'] is False and report['commands_sent']==0
