@@ -14,7 +14,8 @@ class Quality:
   grid=states.get(options['sources']['grid_kw'],{})
   result=inspect(ac,grid,at)
   sources=[{k:s.get(k) for k in ('entity_id','state','last_reported','last_updated','last_changed','rest_state','rest_last_reported','timestamp_origin')} for s in (ac,grid)]
-  key=hashlib.sha256(json.dumps(sources,sort_keys=True).encode()).hexdigest()
+  identity=[{k:v for k,v in row.items() if not k.startswith('rest_')} for row in sources]
+  key=hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()
   issues=[];times=[]
   for role,raw,unit in (('AC',ac,'W'),('M1',grid,'kW')):
    if raw.get('attributes',{}).get('unit_of_measurement')!=unit:issues.append('UNIT_'+role)
