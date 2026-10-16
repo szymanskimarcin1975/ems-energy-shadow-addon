@@ -14,6 +14,15 @@ class API(http.server.BaseHTTPRequestHandler):
             'sensor.example_energy':dict(state='100.3',attributes={'unit_of_measurement':'kWh'},last_reported=at)})
   body=json.dumps([dict(v,entity_id=k) for k,v in s.items()]).encode();self.send_response(200);self.end_headers();self.wfile.write(body)
  def do_POST(self):
+  if self.path=='/template':
+   payload=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+   assert 'last_reported' in payload['template']
+   now=datetime.now(timezone.utc);states,_,at,_,_=fixture(now)
+   states.update({'sensor.example_temperature':dict(state='8',attributes={'unit_of_measurement':'°C'},last_reported=at),'sensor.example_energy':dict(state='100.3',attributes={'unit_of_measurement':'kWh'},last_reported=at)})
+   rows={e:dict(state=v['state'],unit=v.get('attributes',{}).get('unit_of_measurement'),last_reported=at,last_updated=at,last_changed=at) for e,v in states.items() if e.startswith('sensor.example')}
+   # Mimic the precise constrained template entity selection.
+   rows={e:v for e,v in rows.items() if json.dumps(e) in payload['template']}
+   self.send_response(200);self.end_headers();self.wfile.write(json.dumps(rows).encode());return
   assert self.path=='/services/weather/get_forecasts?return_response'
   self.rfile.read(int(self.headers['Content-Length']))
   now=datetime.now(timezone.utc).replace(minute=0,second=0,microsecond=0)
@@ -24,6 +33,7 @@ os.environ['SUPERVISOR_TOKEN']='synthetic-only'
 with tempfile.TemporaryDirectory() as td:
  root=Path(td);now=datetime.now(timezone.utc)
  _,_,_,c,o=fixture(now)
+ c['refresh_ha_state_snapshot']=True
  o['observation'].update(enabled=True,weather=dict(local_entity='sensor.example_temperature',weather_entity='weather.example',max_ha_age_seconds=900))
  o['observation']['boiler_sources']['energy']='sensor.example_energy'
  options=root/'options.json';options.write_text(json.dumps(o));config=root/'planning.json';config.write_text(json.dumps(c))
