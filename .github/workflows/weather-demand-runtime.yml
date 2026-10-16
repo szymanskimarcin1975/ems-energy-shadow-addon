@@ -29,5 +29,15 @@ jobs:
         run: docker build --platform linux/amd64 -t ems-demand:candidate ems_shadow
       - name: Actual worker with isolated synthetic HTTP, restart and SIGKILL
         run: docker run --rm --network none -e PYTHONPATH=/app:/app/observation -v "$PWD/ci/weather_demand:/tests:ro" --entrypoint python ems-demand:candidate /tests/container_smoke.py
+      - name: Fetch exact installed source for code-only recovery test
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 6c26602375d974fdfbea03a83b1a27a2fbc644d5
+          path: baseline
+          persist-credentials: false
+      - name: Build installed baseline image
+        run: docker build --platform linux/amd64 -t ems-demand:baseline baseline/ems_shadow
+      - name: Full gateway update and code rollback with all channels
+        run: python ci/weather_demand/full_container_transition.py
       - name: Record image identity
         run: docker image inspect ems-demand:candidate --format '{{.Id}}'
