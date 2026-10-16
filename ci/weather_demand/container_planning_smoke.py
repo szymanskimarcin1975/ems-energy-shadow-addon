@@ -39,6 +39,8 @@ with tempfile.TemporaryDirectory() as td:
  assert r['status']=='HYPOTHETICAL_SCHEDULE_READY',r
  assert not r['control_enabled'] and len(r['decisions'])==4 and r['persisted_runs']==1
  assert all(len(d['schedule'])==24 for d in r['decisions'])
+ assert len(r['building_decisions'])==4 and not r['active_control_readiness']['ready']
+ assert all(len(d['schedule'])==24 for d in r['building_decisions'])
  probe="import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute('pragma integrity_check').fetchone()[0],c.execute('select count(*) from runs').fetchone()[0])"
  assert subprocess.check_output([sys.executable,'-c',probe,str(root/'planning-v1.sqlite')],text=True).strip()=='ok 1'
  print('PASS actual worker -> baseline -> planning -> SQLite COMMIT -> published report; hypothetical only, no device calls')
