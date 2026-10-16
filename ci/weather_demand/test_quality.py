@@ -31,7 +31,7 @@ class Tests(unittest.TestCase):
   with self.assertRaises(sqlite3.Error):self.q.observe(s,at,o)
   self.assertEqual(self.c.execute('select count(*) from balance_checks').fetchone()[0],0)
  def test_source_change_blocks_mixing(self):
-  s,_,at,_,o=fixture();self.q.observe(s,at,o);o=copy.deepcopy(o);o['sources']['grid_kw']='sensor.other'
+  s,_,at,_,o=fixture();self.q.observe(s,at,o);o=copy.deepcopy(o);o['sources']['grid_kw']='sensor.example_other'
   with self.assertRaises(ValueError):self.q.observe(s,(T+timedelta(seconds=20)).isoformat(),o)
   self.assertEqual(self.c.execute('select count(*) from balance_checks').fetchone()[0],1)
  def test_reopen_in_separate_process(self):
