@@ -25,3 +25,11 @@ class Tests(unittest.TestCase):
  def test_read_api_refuses_actuator_paths(self):
   from battery_runtime import ReadAPI
   with self.assertRaises(ValueError):ReadAPI('synthetic').call('POST','/services/select/select_option',{})
+
+ def test_unavailable_not_hidden_by_fresh_memory_report(self):
+  now=datetime.now(timezone.utc);id='sensor.example_battery'
+  raw={'state':'unavailable','last_reported':now.isoformat()}
+  r=evaluate({id:raw},{'b1_status':id},now,{id:raw})
+  self.assertIn('b1_status:UNAVAILABLE',r['input_issues'])
+ def test_report_expiry_is_explicit(self):
+  r=self.report();self.assertEqual((datetime.fromisoformat(r['valid_until'])-datetime.fromisoformat(r['recorded_at'])).total_seconds(),60)

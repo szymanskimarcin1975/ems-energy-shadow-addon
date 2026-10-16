@@ -3,7 +3,7 @@ SOC thresholds are deliberately unapproved and never default to 0/100.
 """
 import argparse,json,os,re,signal,sys,threading
 from pathlib import Path
-from datetime import datetime,timezone
+from datetime import datetime,timezone,timedelta
 from urllib.request import Request,urlopen
 
 def atomic(path,data):
@@ -55,8 +55,8 @@ def evaluate(states,sources,now,memory=None):
             if mem.get('state')!=value:memory_quality='STATE_CHANGED_BETWEEN_REQUESTS'
         except (KeyError,TypeError,ValueError):pass
         result[role]={'entity_id':entity,'state':value,'ha_last_reported':raw.get('last_reported'),'ha_last_updated':raw.get('last_updated'),'ha_last_changed':raw.get('last_changed'),'age_seconds':age,'quality':quality,'memory_last_reported':mem.get('last_reported'),'memory_last_updated':mem.get('last_updated'),'memory_last_changed':mem.get('last_changed'),'memory_age_seconds':mem_age,'memory_quality':memory_quality,'device_time_confirmed':False}
-        if quality!='HA_UPDATE_FRESH' and memory_quality!='HA_WRITE_RECENT_DEVICE_TIME_UNCONFIRMED':issues.append(role+':'+quality)
-    return {'recorded_at':now.isoformat(),'component':'battery_executor_readiness',
+        if quality!='HA_UPDATE_FRESH' and not (quality=='HA_UPDATE_STALE_OR_FUTURE' and memory_quality=='HA_WRITE_RECENT_DEVICE_TIME_UNCONFIRMED'):issues.append(role+':'+quality)
+    return {'recorded_at':now.isoformat(),'valid_until':(now+timedelta(seconds=60)).isoformat(),'status_semantics':'snapshot; after valid_until process state is UNKNOWN','component':'battery_executor_readiness',
       'state':'BLOCKED','mode':'READ_ONLY','commands_enabled':False,'commands_sent':0,
       'policy':{'rated_wh':Policy().rated_wh,'max_charge_w':Policy().max_charge_w,'max_discharge_w':Policy().max_discharge_w,'soc_min':None,'soc_max':None,'soc_bounds_approved':False},
       'blockers':['SOC_BOUNDS_UNAPPROVED','EXTERNAL_OWNERSHIP_FENCE_UNVERIFIED','PHYSICAL_FALLBACK_UNVERIFIED','NO_BATTERY_EXPORT_UNVERIFIED'],
@@ -81,6 +81,9 @@ def main():
         except Exception:
             report={'recorded_at':datetime.now(timezone.utc).isoformat(),'component':'battery_executor_readiness','state':'UNKNOWN','mode':'READ_ONLY','commands_enabled':False,'commands_sent':0,'reason':'read_failed'}
         seq+=1
+        report['completed_cycles']=seq
+        report.setdefault('valid_until',(datetime.now(timezone.utc)+timedelta(seconds=60)).isoformat())
+        report.setdefault('status_semantics','snapshot; after valid_until process state is UNKNOWN')
         try:atomic(a.report,report)
         except OSError:print('battery_readiness_report_write_failed',flush=True)
         atomic(root/'battery-heartbeat.json',{'pid':os.getpid(),'sequence':seq,'phase':'completed','completed_cycles':seq,'committed_cycles':0,'status':report['state'],'captured_at':datetime.now(timezone.utc).isoformat()})
