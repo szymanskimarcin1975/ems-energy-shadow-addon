@@ -56,3 +56,12 @@ class Tests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/'config';p.write_text('{')
    with patch('battery_service.CONFIG_PATH',p):self.assertEqual(read_config()['mode'],'READ_ONLY')
+
+class DeadlineTests(unittest.TestCase):
+ def test_expired_transport_deadline_makes_no_request(self):
+  from battery_executor import SupervisorHA
+  import time
+  ha=SupervisorHA('synthetic');ha.deadline=time.monotonic()-1
+  with patch('urllib.request.urlopen') as network:
+   with self.assertRaises(RuntimeError):ha.state('sensor.example')
+   network.assert_not_called()

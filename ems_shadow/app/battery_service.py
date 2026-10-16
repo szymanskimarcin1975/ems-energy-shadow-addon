@@ -1,7 +1,7 @@
 """Scheduled battery executor. READ_ONLY by default; no authority from a report.
 Hardware fallback and no-export protection require separate, expiring evidence.
 """
-import json,math,sqlite3
+import json,math,sqlite3,time
 from pathlib import Path
 from datetime import datetime,timezone
 from battery_executor import Executor,Policy,SupervisorHA
@@ -54,6 +54,7 @@ class BatteryService:
    self.db.execute("INSERT OR IGNORE INTO runtime VALUES(1,0,'INITIALIZED')")
   except BaseException:self.db.close();raise
  def cycle(self,config,profile):
+  if isinstance(self.ha,SupervisorHA):self.ha.deadline=time.monotonic()+10
   now=self.clock();mode=config.get('mode','READ_ONLY');planning=planning_policy(profile)
   reasons=proof_reasons(config,now)
   if mode not in ('READ_ONLY','ACTIVE'):reasons.append('INVALID_EXECUTION_MODE')

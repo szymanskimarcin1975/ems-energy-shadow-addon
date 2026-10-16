@@ -131,7 +131,7 @@ def main():
                 if report['bms']['sources']['status']['state'] not in {'B_STATUS_STANDBY','B_STATUS_IDLE','B_STATUS_CHARGE','B_STATUS_DISCHARGE'}:report['blockers'].append('BMS_STATUS_NOT_APPROVED_FOR_ACTUATION')
             try:
                 report['execution_service']=service.cycle(read_config(),profile) if service else {'executor_initialized':False,'effective_state':'INITIALIZATION_ERROR','actuation_policy_enabled':False}
-            except Exception:report['execution_service']={'executor_initialized':False,'effective_state':'EXECUTION_ERROR','actuation_policy_enabled':False}
+            except Exception:report['execution_service']={'executor_initialized':False,'effective_state':'EXECUTION_ERROR','actuation_policy_enabled':False,'delivery_uncertain':True}
             execution=report['execution_service']
             report['mode']=execution.get('requested_mode','READ_ONLY')
             report['commands_enabled']=execution.get('actuation_policy_enabled',False)
@@ -145,7 +145,7 @@ def main():
             report['owner_states_consistent']=report['shared_owner']['state']==report['ownership']['owner']
             if not report['owner_states_consistent']:report['blockers'].append('OWNERSHIP_MISMATCH_NO_AUTOMATIC_RECONCILIATION')
         except Exception:
-            report={'recorded_at':datetime.now(timezone.utc).isoformat(),'component':'battery_executor_readiness','state':'UNKNOWN','mode':'READ_ONLY','commands_enabled':False,'commands_sent':0,'reason':'read_failed'}
+            report={'recorded_at':datetime.now(timezone.utc).isoformat(),'component':'battery_executor_readiness','state':'UNKNOWN','mode':'UNKNOWN','commands_enabled':False,'commands_sent':None,'reason':'read_failed'}
         seq+=1
         report['completed_cycles']=seq
         report.setdefault('valid_until',(datetime.now(timezone.utc)+timedelta(seconds=60)).isoformat())

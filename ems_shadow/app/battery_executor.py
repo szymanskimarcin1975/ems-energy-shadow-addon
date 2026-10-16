@@ -6,6 +6,7 @@ from contextlib import closing
 import fcntl
 import json
 import math
+import time
 import re
 import sqlite3
 import urllib.request
@@ -20,11 +21,13 @@ class SupervisorHA:
     def __init__(self, token, base='http://supervisor/core/api'):
         self.token=token; self.base=base.rstrip('/')
     def _request(self,path,data=None):
+        remaining=getattr(self,'deadline',float('inf'))-time.monotonic()
+        if remaining<=0:raise RuntimeError('ha_cycle_deadline')
         req=urllib.request.Request(self.base+path,
           data=None if data is None else json.dumps(data).encode(),
           headers={'Authorization':'Bearer '+self.token,'Content-Type':'application/json'})
         try:
-            with urllib.request.urlopen(req,timeout=5) as r: return json.load(r)
+            with urllib.request.urlopen(req,timeout=min(5,remaining)) as r: return json.load(r)
         except Exception:
             raise RuntimeError('ha_transport_error') from None
     def state(self,entity):
