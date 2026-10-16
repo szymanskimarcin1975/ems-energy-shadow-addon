@@ -23,7 +23,9 @@ def plan(states,prediction,at,config,options):
        'All-site PV allocation to boiler is hypothetical','Efficiency and reserve are scenario assumptions',
        'No CWU or CO scheduling; no device commands','No calibrated forecast uncertainty'],
        'balance':inspect(states.get(solar['ac_power'],{}),states.get(old['grid_kw'],{}),at),
-       'decisions':[]}
+       'decisions':[],'building_decisions':[],
+       'active_control_readiness':{'ready':False,'ownership':'LEGACY_NOT_TOUCHED',
+        'blockers':['M1_SCOPE_UNCONFIRMED','DEVICE_TIME_SYNC_UNCONFIRMED','RESERVE_AND_EFFICIENCY_UNVERIFIED','PRICES_NOT_CONTRACT_VERIFIED','FORECAST_UNCALIBRATED','SINGLE_WRITER_HANDOVER_NOT_EXECUTED']}}
     # Historical direction conventions; actual production PV is intentionally absent.
     try:
         grid=value(states,old['grid_kw'],'kW',at); battery=value(states,solar['b1_power'],'W',at)
@@ -85,10 +87,33 @@ def plan(states,prediction,at,config,options):
                 for entry,meta in zip(result['schedule'],times):entry.update(meta,reason='Minimise hypothetical import cost subject to scenario reserve, power and no battery export')
                 r['decisions'].append(dict(result,future_day_type=future_day_type,pv_scenario=pv_key,
                      scope='BOILER_ONLY_HYPOTHETICAL_PV_AND_BATTERY_ALLOCATION',not_full_building_dispatch=True))
+        # A separate, conditional whole-building persistence estimate. This is
+        # forecasting from an instantaneous observation, never kWh measurement.
+        candidate=r['balance'].get('candidate_building_w')
+        r['building_candidate']={'status':'BLOCKED_INVALID_BALANCE',
+             'topology_confirmed':False,'measurement_energy_kwh':None,
+             'method':'constant_instantaneous_load_persistence_uncalibrated',
+             'temperature_response_identified':False,'uncertainty_calibrated':False}
+        if r['balance'].get('status')=='DIAGNOSTIC_ONLY' and candidate is not None and candidate>=0:
+            r['building_candidate'].update(status='CONDITIONAL_ESTIMATE_ONLY',power_w=candidate,
+                assumption='M1 at whole-site grid connection, one represented AC inverter, aligned device snapshots; unconfirmed')
+            for d in r['decisions']:
+                slots=[];times=[]
+                for entry in d['schedule']:
+                    times.append({'valid_for':entry['valid_for'],'tariff':entry['tariff']})
+                    slots.append(dict(load_kwh=candidate/1000,pv_kwh=entry['pv_kwh'],
+                          price_pln_kwh=price[entry['tariff']],hours=1))
+                result=simulate(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,ce,de,topology_confirmed=True,step_kwh=.25)
+                for entry,meta,slot in zip(result['schedule'],times,slots):
+                    entry.update(meta,load_kwh=slot['load_kwh'],pv_kwh=slot['pv_kwh'],
+                        reason='Conditional whole-site persistence scenario; not a validated building measurement or command')
+                r['building_decisions'].append(dict(result,scope='CONDITIONAL_WHOLE_BUILDING_NOT_APPROVED',future_day_type=d['future_day_type'],pv_scenario=d['pv_scenario']))
+        controllers=config.get('legacy_controller_entities',[])
+        r['active_control_readiness']['legacy_controllers']={e:states.get(e,{}).get('state','unknown') for e in controllers}
         r['status']='HYPOTHETICAL_SCHEDULE_READY'
         r['pv_forecast_issued_at']=issued.isoformat()
     except (KeyError,TypeError,ValueError,OverflowError) as exc:
-        r['status']='BLOCKED_INPUT';r['reason']=type(exc).__name__+':'+str(exc)[:100];r['decisions']=[]
+        r['status']='BLOCKED_INPUT';r['reason']=type(exc).__name__+':'+str(exc)[:100];r['decisions']=[];r['building_decisions']=[]
     return r
 
 class Planner:
