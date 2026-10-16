@@ -177,7 +177,7 @@ def main():
                         planning_config=json.loads(planning_path.read_text())
                         if planning_config.get('enabled') is True:
                             if planner is None:planner=Planner(root/'planning-v1.sqlite')
-                            planner.quality.observe(states,at,json.loads(Path(args.options).read_text()))
+                            planner.observe(states,at,json.loads(Path(args.options).read_text()))
                             if time.monotonic()>=next_planning:
                                 result=planner.run(states,prediction,at,planning_config,json.loads(Path(args.options).read_text()))
                                 atomic('/ha_config/ems_shadow/planning_report.yaml',result)
