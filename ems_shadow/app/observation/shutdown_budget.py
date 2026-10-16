@@ -1,7 +1,7 @@
 """One shared shutdown deadline; unknown identities are never signalled."""
 import os,signal,time
 
-def shutdown_all(legacy,guards,publisher=None,budget=22,grace=10):
+def shutdown_all(legacy,guards,publisher=None,budget=22,grace=18):
  start=time.monotonic();targets=[];unknown=[]
  # Legacy and publisher are directly owned children; no PID discovery.
  for name,c in [('legacy',legacy),('publisher',publisher)]:

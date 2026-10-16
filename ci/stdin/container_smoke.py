@@ -63,7 +63,7 @@ with tempfile.TemporaryDirectory() as d:
         later=wait_report(lambda r:r['samples']>first['samples'])
         p.stdin.write((json.dumps(req)+'\n').encode());p.stdin.flush();time.sleep(.3)
         assert len(list((data/'diagnostic_exports').glob('*/snapshot.sqlite')))==1
-        run('stop','--time','15',observer);p.wait(timeout=20)
+        run('stop','--time','30',observer);p.wait(timeout=35)
         assert p.returncode==0
         # Corrupt only the synthetic control DB, never the observer ledger.
         run('rm',observer)
@@ -109,6 +109,13 @@ with tempfile.TemporaryDirectory() as d:
         assert old['ledger_id']=='synthetic' and old['addon_version']=='0.1.2'
         run('stop','--time','30',observer);p.wait(timeout=35);assert p.returncode==0
         print(json.dumps(dict(fresh_disabled_start='PASS; no controller or exporter process/files; correlated STDIN ack',observer_samples_before=first['samples'],observer_samples_after=later['samples'],exports=1,report='aggregate_only',impact='continued_collection; short export does not establish timing equivalence')))
+    except BaseException:
+        # Only synthetic fixtures/dummy credentials are used by this test.
+        for name in (observer,api):
+            for args in [('logs','--tail','100',name),('inspect','--format','{{json .State}}',name),('top',name,'-eo','pid,args')]:
+                result=subprocess.run(['docker',*args],capture_output=True,text=True)
+                print(result.stdout, result.stderr, flush=True)
+        raise
     finally:
         for name in (observer,api):subprocess.run(['docker','rm','-f',name],capture_output=True)
         subprocess.run(['docker','network','rm',network],capture_output=True)

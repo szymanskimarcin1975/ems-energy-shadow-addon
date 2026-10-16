@@ -40,7 +40,7 @@ def main():
      g.state='UNKNOWN';print('observation_supervision_unknown; legacy_unaffected',flush=True)
    time.sleep(.1)
  finally:
-  result=shutdown_all(legacy,guards,publisher,budget=22,grace=10)
+  result=shutdown_all(legacy,guards,publisher,budget=22)
   print(json.dumps({'component':'observation_shutdown',**result}),flush=True)
   for s,h in previous.items():signal.signal(s,h)
  return 70 if result['state']=='UNKNOWN' else (legacy.returncode or 0)
