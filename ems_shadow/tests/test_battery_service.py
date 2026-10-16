@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime,timezone,timedelta
 from unittest.mock import patch
 from battery_service import BatteryService,PROOFS,read_config
+from fault_guard import READY
 from test_battery_executor import HA
 PROFILE={'soc_operating_bounds':{'minimum':0,'maximum':100,'owner_approved':True},'operational_parameters':{'rated_energy_wh':9200,'max_charge_w':5000,'max_discharge_w':5000,'storage_control_mode':'Remote Control','storage_default_mode':'Maximize Self Consumption','storage_command_timeout_s':3600}}
 class Local:
@@ -27,11 +28,20 @@ def config(mode='ACTIVE'):
  return {'telemetry_sources':{'m1_power':'sensor.example_m1','b1_power':'sensor.example_b1','soc':'sensor.example_soc'},'mode':mode,'device':device,'verified_evidence':{k:dict(verified=True,device=device,reference='synthetic-offline-evidence',verified_at=(now-timedelta(seconds=10)).isoformat(),valid_until=(now+timedelta(seconds=60)).isoformat()) for k in PROOFS},'safety_soc_bounds':{'minimum':0,'maximum':100},'owner_entity':'input_select.example_owner','authorization_entity':'input_boolean.example_auth','expected_epoch':2,'old_writers':['automation.old'],'sources':{'soc':'sensor.example_soc','command_mode':'select.mode','control_mode':'select.example_control','charge_limit':'number.charge','discharge_limit':'number.discharge','device_model':'sensor.example_model','device_firmware':'sensor.example_firmware','timeout':'number.example_timeout','default_mode':'select.example_default'},'bms_sources':{k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')},'pending_request':{'request_id':'example_request','option':'Charge from Solar Power','expires_at':(now+timedelta(seconds=45)).isoformat()}}
 class Tests(unittest.TestCase):
  def setUp(self):
+  fault=patch('fault_guard.FaultGuard.observe',return_value=READY);fault.start();self.addCleanup(fault.stop)
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.ha=TestHA();self.s=BatteryService(self.tmp.name,Local(),'synthetic',ha=self.ha);self.addCleanup(self.s.close)
  def test_readonly_initializes_real_executor_without_transport_calls(self):
   with patch.object(self.ha,'state',side_effect=AssertionError('must not read actuator')):
    r=self.s.cycle(config('READ_ONLY'),PROFILE)
   self.assertTrue(r['executor_initialized']);self.assertIsNotNone(self.s.executor);self.assertEqual(r['effective_state'],'READ_ONLY');self.assertFalse(r['actuation_policy_enabled']);self.assertEqual(self.ha.calls,[])
+ def test_fault_in_live_guard_blocks_without_transport(self):
+  with patch.object(self.s.fault_guard,'observe',side_effect=[READY,'INVERTER_FAULT']):
+   r=self.s.cycle(config(),PROFILE)
+  self.assertEqual(r['effective_state'],'INVERTER_FAULT');self.assertEqual(self.ha.calls,[])
+ def test_fault_during_cycle_blocks_active(self):
+  with patch.object(self.s.fault_guard,'observe',return_value='INVERTER_FAULT'):
+   r=self.s.cycle(config(),PROFILE)
+  self.assertIn('INVERTER_FAULT',r['safety_reasons']);self.assertEqual(self.ha.calls,[])
  def test_active_synthetic_full_path_and_ack(self):
   r=self.s.cycle(config(),PROFILE);self.assertEqual(r['effective_state'],'ACK');self.assertEqual(len(self.ha.calls),1);self.assertFalse(r['device_execution_confirmed']);self.assertEqual(r['commands_ha_acknowledged'],1)
  def test_missing_hardware_evidence_does_not_disable_legacy(self):

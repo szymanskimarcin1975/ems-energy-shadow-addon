@@ -102,3 +102,22 @@ def predict(rows, issued_at, slot, day_type, temperature, target='boiler', min_d
                 temperature_used=True, temperature_c=temp,
                 empirical_range_kwh=[min(x[1] for x in nearest), max(x[1] for x in nearest)],
                 uncertainty_calibrated=False)
+
+def temperature_feature(local, forecast_c, issued_at, target_at):
+    """Explicit experimental short-horizon local persistence; never a bias correction.
+    Beyond two hours use the separate weather forecast. No learned response claimed.
+    """
+    lead=(stamp(target_at)-stamp(issued_at)).total_seconds()
+    value=None
+    try:
+        if local.get('status')=='valid_ha_observation' and 0<=lead<=7200 and 0<=(stamp(issued_at)-stamp(local['ha_reported_at'])).total_seconds()<=900:
+            v=number(local['temperature_c'])
+            if -60<=v<=60:value=v
+    except (ValueError,TypeError,KeyError):pass
+    if value is not None:
+        return {'temperature_c':value,'method':'LOCAL_PERSISTENCE_LEAD_UP_TO_2H_EXPERIMENTAL','local_input_used':True,'forecast_temperature_c':forecast_c,'accuracy_improvement_validated':False}
+    try:
+        value=number(forecast_c)
+        if not -60<=value<=60:value=None
+    except (ValueError,TypeError):value=None
+    return {'temperature_c':value,'method':'SEPARATE_WEATHER_FORECAST' if value is not None else 'NO_TEMPERATURE_FEATURE','local_input_used':False,'forecast_temperature_c':forecast_c,'accuracy_improvement_validated':False}

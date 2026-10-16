@@ -62,7 +62,7 @@ def forecast(history,profile,issued_at,targets):
 
 def schedule(states,at,config,options,profile,input_safety,soc_policy):
  from planning_runtime import value
- from dispatch_simulator import simulate
+ from deadline_dispatch import simulate_deadlines
  from boiler_offline.g13 import tariff
  now=stamp(at)
  if not input_safety or not input_safety.get('current_ha_set_valid'):raise ValueError('inconsistent_household_snapshot')
@@ -111,9 +111,11 @@ def schedule(states,at,config,options,profile,input_safety,soc_policy):
     t=stamp(h['valid_for']);local=t.astimezone(ZONE)
     workday=day if local.date()==now.astimezone(ZONE).date() else ('on' if future_type=='workday' else 'off')
     zone=tariff(t,workday);solar_kwh=pv[t.isoformat()][scenario]
-    slots.append(dict(load_kwh=h['prediction_kwh'],pv_kwh=solar_kwh,price_pln_kwh=rates[zone],hours=1))
+    # Slot starts at 15:00 and ends at 16:00: target is BEFORE the expensive window.
+    deadline=capacity if workday=='on' and local.hour==15 else None
+    slots.append(dict(load_kwh=h['prediction_kwh'],pv_kwh=solar_kwh,price_pln_kwh=rates[zone],hours=1,target_after_kwh=deadline))
     meta.append(dict(valid_for=t.isoformat(),tariff=zone,load_kwh=h['prediction_kwh'],pv_kwh=solar_kwh,load_method=h['method']))
-   result=simulate(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,float(config['simulation_charge_eff']),float(config['simulation_discharge_eff']),topology_confirmed=True,step_kwh=.25)
+   result=simulate_deadlines(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,float(config['simulation_charge_eff']),float(config['simulation_discharge_eff']))
    for row,m in zip(result['schedule'],meta):row.update(m,reason='Advisory optimisation from actual historical HA aggregates or observed persistence; not device authority')
    decisions.append(dict(result,scope='CONDITIONAL_WHOLE_BUILDING_NOT_APPROVED',future_day_type=future_type,pv_scenario=scenario))
- return {'forecast':forecast_result,'decisions':decisions,'charge_ceiling_kw':charge,'peak_guard':peak_guard,'planning_min_soc_percent':minimum,'planning_max_soc_percent':100,'pv_issued_at':issued.isoformat(),'control_enabled':False,'prices_contract_verified':False}
+ return {'forecast':forecast_result,'decisions':decisions,'charge_ceiling_kw':charge,'peak_guard':peak_guard,'planning_min_soc_percent':minimum,'planning_max_soc_percent':100,'pv_issued_at':issued.isoformat(),'control_enabled':False,'prices_contract_verified':False,'workday_soc_deadline':{'local_time':'16:00','target_percent':100,'partial_current_hour_not_modelled':True,'current_deadline_unmodelled':day=='on' and now.astimezone(ZONE).hour==15,'physical_feasibility_confirmed':False}}

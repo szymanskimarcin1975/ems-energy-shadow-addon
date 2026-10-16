@@ -27,6 +27,7 @@ class Handler(BaseHTTPRequestHandler):
         stamp=(datetime.now(timezone.utc)-timedelta(seconds=5)).isoformat()
         extra={'sensor.example_b1_soc':'50','sensor.example_b1_power':'500','sensor.example_b1_status':'B_STATUS_CHARGE','sensor.example_ac_power':'1000','sensor.example_m1_import':'100','sensor.example_m1_export':'20'}
         extra['sensor.example_m1_power']='-1'
+        extra.update({'sensor.example_inverter_status':'I_STATUS_MPPT','sensor.example_vendor_status':'0x0'})
         units={'sensor.example_m1_power':'kW','sensor.example_b1_power':'W','sensor.example_b1_soc':'%'}
         rows=[dict(entity_id=id,state=extra.get(id,'unknown'),attributes={'unit_of_measurement':units.get(id)},last_reported=stamp,last_updated=stamp,last_changed=stamp) for id in ids]
         if 'soc_entity' in body.get('variables',{}):
