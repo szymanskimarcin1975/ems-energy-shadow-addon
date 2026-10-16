@@ -4,14 +4,14 @@ Not billing, measurement integration, calibrated prediction, or device authority
 import json,math
 from pathlib import Path
 from statistics import median
-from datetime import datetime,timedelta
+from datetime import datetime,timedelta,timezone
 from zoneinfo import ZoneInfo
 ZONE=ZoneInfo('Europe/Warsaw')
 HISTORY_PATH=Path('/ha_config/ems_shadow/household_history_profile_20261016.yaml')
 def stamp(v):
  t=datetime.fromisoformat(v)
  if t.tzinfo is None:raise ValueError('naive_time')
- return t
+ return t.astimezone(timezone.utc)
 
 def load_history():
  try:

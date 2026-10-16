@@ -147,6 +147,7 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
         r['status']='ADVISORY_HOUSEHOLD_SCHEDULE_READY'
         r['boiler_forecast_blocker']=r.pop('reason',None)
     except (KeyError,TypeError,ValueError,OverflowError) as exc:
+        r['building_decisions']=[]
         r['household_advisory']={'status':'BLOCKED','reason':type(exc).__name__+':'+str(exc)[:100],'control_enabled':False}
     r['current_plan_usable_for_simulation']=(r['status'] in ('HYPOTHETICAL_SCHEDULE_READY','ADVISORY_HOUSEHOLD_SCHEDULE_READY') and input_safety is not None and input_safety.get('current_ha_set_valid') is True)
     return r

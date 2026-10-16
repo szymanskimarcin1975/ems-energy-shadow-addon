@@ -37,9 +37,13 @@ class HistoryTests(unittest.TestCase):
    p=Path(d)/'history';p.write_text('{')
    with patch('household_advisory.HISTORY_PATH',p):self.assertIsNone(load_history())
 class IntegratedTests(unittest.TestCase):
- def run_plan(self,peak=0):
+ def run_plan(self,peak=0,local_pv=False):
   a=list(fixture());a[3]['m1_scope_evidence']=dict(scope='whole_building_grid_exchange',confirmed_by='installation_owner',confirmed_at=(T-timedelta(days=1)).isoformat())
   a[3]['bms_peak_charge_entity']='sensor.example_peak';a[0]['sensor.example_peak']=dict(state=str(peak),attributes={'unit_of_measurement':'W'})
+  if local_pv:
+   from zoneinfo import ZoneInfo
+   from datetime import datetime
+   for row in a[0]['sensor.example_pv']['attributes']['detailedHourly']:row['period_start']=datetime.fromisoformat(row['period_start']).astimezone(ZoneInfo('Europe/Warsaw')).isoformat()
   for h in a[1]['horizon']:
    for v in h['scenarios'].values():v['prediction_kwh']=None
   with patch('planning_runtime.load_profile',return_value=APPROVAL),patch('household_advisory.load_history',return_value=history()):return plan(*a,building_profile=profile(),input_safety={'current_ha_set_valid':True})
@@ -56,3 +60,9 @@ class IntegratedTests(unittest.TestCase):
    p=Path(d)/'planning.sqlite';db=Planner(p);db.run(*fixture());db.run(*fixture());db.c.close()
    out=subprocess.check_output([sys.executable,'-c',"import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);print(c.execute('pragma integrity_check').fetchone()[0],c.execute('select count(*) from runs').fetchone()[0])",str(p)],text=True)
    self.assertEqual(out.strip(),'ok 1')
+
+class TimezoneRegression(unittest.TestCase):
+ def test_real_solcast_offset_matches_utc_targets(self):
+  r=IntegratedTests().run_plan(local_pv=True)
+  self.assertEqual(r['status'],'ADVISORY_HOUSEHOLD_SCHEDULE_READY')
+  self.assertEqual(len(r['household_advisory']['decisions']),4)
