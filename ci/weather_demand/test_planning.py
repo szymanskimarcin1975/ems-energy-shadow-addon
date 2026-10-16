@@ -47,6 +47,18 @@ class Tests(unittest.TestCase):
    with patch('planning_runtime.shutil.disk_usage',return_value=namedtuple('Usage','total used free')(100,100,0)):
     with self.assertRaises(OSError):s.observe(states,at,options)
    self.assertEqual(s.c.execute('select count(*) from balance_checks').fetchone()[0],0);s.c.close()
+ def test_owner_scope_removes_only_scope_blocker(self):
+  a=list(fixture());a[3]['m1_scope_evidence']={'scope':'whole_building_grid_exchange','confirmed_by':'installation_owner','confirmed_at':'2026-10-15T00:00:00+00:00'}
+  r=plan(*a,building_profile={'ready':True,'power_w':300})
+  self.assertTrue(r['m1_scope']['confirmed'])
+  self.assertNotIn('M1_SCOPE_UNCONFIRMED',r['active_control_readiness']['blockers'])
+  self.assertIn('DEVICE_TIME_SYNC_UNCONFIRMED',r['active_control_readiness']['blockers'])
+  self.assertFalse(r['active_control_readiness']['ready']);self.assertFalse(r['balance']['topology_confirmed'])
+  self.assertFalse(r['control_enabled']);self.assertEqual(len(r['building_decisions']),4)
+ def test_invalid_or_future_scope_evidence_fails_closed(self):
+  for when in ('bad','2027-01-01T00:00:00+00:00'):
+   a=list(fixture());a[3]['m1_scope_evidence']={'scope':'whole_building_grid_exchange','confirmed_by':'installation_owner','confirmed_at':when}
+   r=plan(*a);self.assertFalse(r['m1_scope']['confirmed']);self.assertIn('M1_SCOPE_UNCONFIRMED',r['active_control_readiness']['blockers'])
  def test_missing_soc(self):
   a=list(fixture());del a[0]['sensor.example_b1_soc'];r=plan(*a);self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertEqual(r['decisions'],[])
  def test_missing_load(self):
