@@ -29,6 +29,17 @@ class SupervisorHA:
     def state(self,entity):
         if not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+',entity): raise ValueError('entity')
         return self._request('/states/'+entity)
+    def current_states(self,entities):
+        ids=list(entities)
+        if not ids or any(not re.fullmatch(r'sensor\.[a-z0-9_]+',e) for e in ids):raise ValueError('bms_entities')
+        template="{% set ns=namespace(rows=[]) %}{% for id in ids %}{% set s=states[id] %}{% if s is not none %}{% set ns.rows=ns.rows+[{'entity_id':id,'state':s.state,'attributes':{'unit_of_measurement':s.attributes.get('unit_of_measurement')},'last_reported':s.last_reported.isoformat()}] %}{% endif %}{% endfor %}{{ ns.rows|to_json }}"
+        rows=self._request('/template',{'template':template,'variables':{'ids':ids}})
+        if isinstance(rows,str):rows=json.loads(rows)
+        if not isinstance(rows,list):raise ValueError('bms_snapshot')
+        result={r['entity_id']:r for r in rows}
+        if len(result)!=len(rows) or set(result)!=set(ids):raise ValueError('bms_snapshot_incomplete')
+        return result # HA current State metadata, never proof of physical sample time.
+
     def select(self,entity,option,*,request_id=None,expires_at=None):
         # Both controllers use the HA queued script. There is no direct device
         # service path in this transport. The production gateway denies EMS2.
@@ -58,12 +69,13 @@ class Executor:
     Local flock is only process exclusivity, NOT a fence against HA automations.
     """
     ALLOWED={'Charge from Solar Power','Discharge to Minimize Import'}
-    def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None,clock=None,control_entity=None):
+    def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None,clock=None,control_entity=None,bms_sources=None):
         self.ha=ha;self.p=policy;self.db=db;self.lock=lock
         self.old=tuple(old_writers);self.soc=soc_entity;self.mode=mode_entity
         self.powers=tuple(power_entities);self.owner_entity=owner_entity;self.ownership=ownership;self.expected_epoch=expected_epoch
         self.clock=clock or (lambda: datetime.now(timezone.utc))
         self.control_entity=control_entity
+        self.bms=dict(bms_sources or {})
     def preflight(self):
         p=self.p
         if p.enabled is not True:return 'DISABLED'
@@ -71,6 +83,7 @@ class Executor:
         if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (p.soc_min,p.soc_max)):return 'INVALID_SOC_LIMITS'
         if not 0<=p.soc_min<p.soc_max<=100:return 'INVALID_SOC_LIMITS'
         if not self.old or len(self.powers)!=2 or not self.owner_entity or not self.control_entity:return 'INCOMPLETE_CONFIGURATION'
+        if set(self.bms)!={'status','max_charge','peak_charge','max_discharge','peak_discharge'}:return 'BMS_SOURCES_UNCONFIRMED'
         if self.local_owner_guard():return 'OWNERSHIP_UNCONFIRMED'
         return None
     def local_owner_guard(self):
@@ -79,6 +92,32 @@ class Executor:
             state=self.ownership.state()
             return not (state.get('owner')=='EMS2' and state.get('epoch')==self.expected_epoch and state.get('commands_permitted') is True and state.get('external_fence_verified') is True)
         except Exception:return True
+    def bms_guard(self,option,now):
+        try:
+            rows=self.ha.current_states(self.bms.values())
+            status=rows[self.bms['status']]
+            age=(self.clock()-datetime.fromisoformat(status['last_reported'])).total_seconds()
+            if not 0<=age<=180:return 'BMS_HA_UPDATE_UNCONFIRMED'
+            if status['state'] not in {'B_STATUS_STANDBY','B_STATUS_IDLE','B_STATUS_CHARGE','B_STATUS_DISCHARGE'}:
+                return 'BMS_STATUS_NOT_APPROVED' # Preserve Charge is not declared a fault.
+            direction='charge' if option=='Charge from Solar Power' else 'discharge'
+            ceiling=self.p.max_charge_w if direction=='charge' else self.p.max_discharge_w
+            limits=[]
+            for role in ('max_'+direction,'peak_'+direction):
+                raw=rows[self.bms[role]]
+                age=(self.clock()-datetime.fromisoformat(raw['last_reported'])).total_seconds()
+                if not 0<=age<=180:return 'BMS_HA_UPDATE_UNCONFIRMED'
+                if raw.get('attributes',{}).get('unit_of_measurement')!='W':return 'BMS_LIMIT_UNIT_INVALID'
+                value=float(raw['state'])
+                if not math.isfinite(value) or value<0:return 'BMS_LIMIT_INVALID'
+                limits.append(value)
+            cap=min(ceiling,*limits)
+            if cap<=0:return 'BMS_DIRECTION_LIMIT_ZERO'
+            remote=float(self.ha.state(self.powers[0 if direction=='charge' else 1])['state'])
+            if not math.isfinite(remote) or remote<0 or remote>cap:return 'REMOTE_LIMIT_EXCEEDS_BMS'
+        except Exception:return 'BMS_READ_UNCONFIRMED'
+        return None
+
     def live_guard(self,option,now):
         if self.local_owner_guard():return 'OWNERSHIP_UNCONFIRMED'
         if self.ha.state(self.owner_entity).get('state')!='EMS2':return 'SHARED_OWNER_NOT_EMS2'
@@ -103,7 +142,7 @@ class Executor:
                 value=float(self.ha.state(entity)['state'])
                 if not math.isfinite(value) or not 0<=value<=limit:return 'POWER_LIMIT_UNSAFE'
             except (KeyError,TypeError,ValueError):return 'POWER_LIMIT_INVALID'
-        return None
+        return self.bms_guard(option,now)
     def execute(self,request_id,option,expires_at,now=None):
         why=self.preflight()
         if why:return why # Disabled never opens SQLite, lock, or HA connection.

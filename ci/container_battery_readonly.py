@@ -23,6 +23,10 @@ with tempfile.TemporaryDirectory() as tmp:
   assert report['mode']=='READ_ONLY' and report['state']=='BLOCKED'
   assert report['commands_enabled'] is False and report['commands_sent']==0
   assert report['template_status']=='AVAILABLE'
+  assert report['bms']['quality']=='HA_DEVICE_BOUND_SNAPSHOT'
+  assert report['bms']['charge_conservative_ceiling_w']==0
+  assert report['bms']['discharge_conservative_ceiling_w']==5000
+  assert report['bms']['commands_authorized'] is False
   assert report['shared_owner']['state']=='LEGACY' and report['owner_states_consistent'] is True
   assert report['inputs']['b1_status']['quality']=='HA_UPDATE_STALE_OR_FUTURE'
   assert report['inputs']['b1_status']['memory_quality']=='HA_WRITE_RECENT_DEVICE_TIME_UNCONFIRMED'

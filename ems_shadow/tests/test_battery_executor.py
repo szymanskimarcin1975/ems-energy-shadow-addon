@@ -12,6 +12,12 @@ class HA:
   if e=='sensor.example_soc':return {'state':str(self.soc),'last_reported':(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()}
   if e.startswith('number.'):return {'state':'5000'}
   return {'state':'Charge from Solar Power','last_updated':datetime.now(timezone.utc).isoformat() if self.ack else '2000-01-01T00:00:00+00:00'}
+ def current_states(self,entities):
+  result={}
+  for e in entities:
+   role=e.removeprefix('sensor.example_bms_')
+   result[e]={'entity_id':e,'state':getattr(self,'bms_status','B_STATUS_IDLE') if role=='status' else str(getattr(self,role,5000)),'attributes':{'unit_of_measurement':'W'},'last_reported':(datetime.now(timezone.utc)-timedelta(seconds=getattr(self,'bms_age',1))).isoformat()}
+  return result
  def select(self,e,o,**kwargs):
   self.calls.append((e,o))
   if self.fail:raise TimeoutError()
@@ -22,7 +28,7 @@ class Tests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.ha=HA()
   self.p=Policy(enabled=True,soc_min=30,soc_max=90,soc_bounds_approved=True,handover_verified=True,no_export_verified=True,fallback_verified=True)
  def executor(self,p=None):
-  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2,control_entity='select.example_control')
+  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2,control_entity='select.example_control',bms_sources={k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')})
  def run_command(self,x,id='r',mode='Charge from Solar Power'):
   return x.execute(id,mode,datetime.now(timezone.utc)+timedelta(seconds=30))
  def test_disabled_no_files_no_api(self):
@@ -75,12 +81,12 @@ class Tests(unittest.TestCase):
 
  def test_deadline_expires_before_live_reads_no_send(self):
   x=self.executor(); start=datetime.now(timezone.utc); times=iter([start+timedelta(seconds=31)])
-  x.clock=lambda:next(times)
+  x.clock=lambda:next(times,start+timedelta(seconds=31))
   self.assertEqual(x.execute('late','Charge from Solar Power',start+timedelta(seconds=30),now=start),'EXPIRED_REQUEST')
   self.assertEqual(self.ha.calls,[])
  def test_deadline_expires_during_final_validation_no_send(self):
   x=self.executor(); start=datetime.now(timezone.utc); times=iter([start,start,start+timedelta(seconds=31)])
-  x.clock=lambda:next(times)
+  x.clock=lambda:next(times,start+timedelta(seconds=31))
   self.assertEqual(x.execute('late2','Charge from Solar Power',start+timedelta(seconds=30),now=start),'EXPIRED_REQUEST')
   with sqlite3.connect(x.db) as db:self.assertEqual(db.execute('SELECT status FROM commands').fetchone()[0],'REJECTED')
   self.assertEqual(self.ha.calls,[])
@@ -114,3 +120,21 @@ class Tests(unittest.TestCase):
   self.ha.select=reject
   self.assertEqual(self.run_command(self.executor()),'REJECTED')
   with sqlite3.connect(Path(self.tmp.name)/'c.sqlite') as db:self.assertEqual(db.execute('select status from commands').fetchone()[0],'REJECTED')
+
+ def test_bms_zero_charge_blocks(self):
+  self.ha.peak_charge=0;self.assertEqual(self.run_command(self.executor()),'BMS_DIRECTION_LIMIT_ZERO');self.assertEqual(self.ha.calls,[])
+ def test_bms_charge_zero_does_not_invent_discharge_zero(self):
+  self.ha.peak_charge=0;self.assertEqual(self.run_command(self.executor(),mode='Discharge to Minimize Import'),'UNKNOWN')
+  self.assertEqual(len(self.ha.calls),1) # fake ACK is charge-only; no real command.
+ def test_bms_preserve_is_unapproved_not_assumed_fault(self):
+  self.ha.bms_status='B_STATUS_PRESERVE_CHARGE';self.assertEqual(self.run_command(self.executor()),'BMS_STATUS_NOT_APPROVED');self.assertEqual(self.ha.calls,[])
+ def test_bms_fault_blocks(self):
+  self.ha.bms_status='B_STATUS_FAULT';self.assertEqual(self.run_command(self.executor()),'BMS_STATUS_NOT_APPROVED')
+ def test_bms_derated_limit_blocks_remote_setting_above_cap(self):
+  self.ha.max_charge=2000;self.assertEqual(self.run_command(self.executor()),'REMOTE_LIMIT_EXCEEDS_BMS')
+ def test_missing_bms_mapping_blocks(self):
+  x=self.executor();x.bms={};self.assertEqual(self.run_command(x),'BMS_SOURCES_UNCONFIRMED')
+ def test_stale_bms_blocks(self):
+  self.ha.bms_age=1000;self.assertEqual(self.run_command(self.executor()),'BMS_HA_UPDATE_UNCONFIRMED')
+ def test_nan_bms_blocks(self):
+  self.ha.peak_charge=float('nan');self.assertEqual(self.run_command(self.executor()),'BMS_LIMIT_INVALID')

@@ -36,6 +36,29 @@ def in_memory_times(api,sources):
     if isinstance(rows,str):rows=json.loads(rows)
     return states_by_id(rows)
 
+BMS_TEMPLATE = """{% set ns=namespace(rows=[]) %}{% set device=device_id(soc_entity) %}{% for id in device_entities(device) if device %}{% set s=states[id] %}{% if s is not none %}{% set ns.rows=ns.rows+[{'entity_id':id,'state':s.state,'attributes':{'unit_of_measurement':s.attributes.get('unit_of_measurement')},'last_reported':s.last_reported.isoformat(),'last_updated':s.last_updated.isoformat(),'last_changed':s.last_changed.isoformat()}] %}{% endif %}{% endfor %}{{ {'device_found':device is not none,'rows':ns.rows}|to_json }}"""
+def bms_snapshot(api,soc_entity,now):
+    if not isinstance(soc_entity,str) or not re.fullmatch(r'sensor\.[a-z0-9_]+',soc_entity):raise ValueError('bms_binding')
+    data=api.call('POST','/template',{'template':BMS_TEMPLATE,'variables':{'soc_entity':soc_entity}})
+    if isinstance(data,str):data=json.loads(data)
+    if not isinstance(data,dict) or data.get('device_found') is not True:raise ValueError('bms_device')
+    rows=states_by_id(data['rows'])
+    if soc_entity not in rows:raise ValueError('bms_source_not_device_member')
+    roles={};limits={}
+    suffixes={'status':'_status','max_charge':'_max_charge_power','peak_charge':'_peak_charge_power','max_discharge':'_max_discharge_power','peak_discharge':'_peak_discharge_power'}
+    for role,suffix in suffixes.items():
+        found=[r for id,r in rows.items() if id.endswith(suffix)]
+        if len(found)!=1:raise ValueError('bms_role_ambiguous')
+        raw=found[0];age=(now-datetime.fromisoformat(raw['last_reported'])).total_seconds()
+        roles[role]={'entity_id':raw['entity_id'],'state':raw['state'],'ha_last_reported':raw['last_reported'],'ha_last_updated':raw.get('last_updated'),'age_seconds':age}
+        if not 0<=age<=180:raise ValueError('bms_age')
+        if role!='status':
+            import math
+            value=float(raw['state'])
+            if raw.get('attributes',{}).get('unit_of_measurement')!='W' or not math.isfinite(value) or value<0:raise ValueError('bms_limit')
+            limits[role]=value
+    return {'quality':'HA_DEVICE_BOUND_SNAPSHOT','sources':roles,'charge_conservative_ceiling_w':min(Policy().max_charge_w,limits['max_charge'],limits['peak_charge']),'discharge_conservative_ceiling_w':min(Policy().max_discharge_w,limits['max_discharge'],limits['peak_discharge']),'peak_limit_semantics':'exposed upper bound only; dynamic BMS permission unconfirmed','device_measurement_time_confirmed':False,'commands_authorized':False}
+
 def shared_owner(states):
     found=[s for s in states.values() if s.get('entity_id','').startswith('input_select.') and s.get('attributes',{}).get('friendly_name')=='EMS Battery Control Owner' and s.get('attributes',{}).get('options')==['UNKNOWN','LEGACY','EMS2']]
     if len(found)!=1:return {'entity_id':None,'state':'UNKNOWN','reason':'missing_or_ambiguous_shared_owner'}
@@ -92,6 +115,12 @@ def main():
             except Exception:memory={};template_status='UNAVAILABLE'
             report=evaluate(states,sources,datetime.now(timezone.utc),memory)
             report['template_status']=template_status
+            try:report['bms']=bms_snapshot(api,sources.get('b1_soc'),datetime.now(timezone.utc))
+            except Exception:report['bms']={'quality':'UNCONFIRMED','commands_authorized':False}
+            if report['bms']['quality']=='UNCONFIRMED':report['blockers'].append('BMS_LIMITS_UNCONFIRMED')
+            else:
+                if report['bms']['charge_conservative_ceiling_w']==0:report['blockers'].append('BMS_CHARGE_CEILING_ZERO')
+                if report['bms']['sources']['status']['state'] not in {'B_STATUS_STANDBY','B_STATUS_IDLE','B_STATUS_CHARGE','B_STATUS_DISCHARGE'}:report['blockers'].append('BMS_STATUS_NOT_APPROVED_FOR_ACTUATION')
             report['ownership']=ownership.state()
             report['owner_states_consistent']=report['shared_owner']['state']==report['ownership']['owner']
             if not report['owner_states_consistent']:report['blockers'].append('OWNERSHIP_MISMATCH_NO_AUTOMATIC_RECONCILIATION')

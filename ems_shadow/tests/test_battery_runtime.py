@@ -48,3 +48,18 @@ class Tests(unittest.TestCase):
   self.assertEqual(control_interface({'a':raw,'b':dict(raw,entity_id='select.example_other')})['state'],'UNKNOWN')
  def test_missing_remote_mode_is_reported(self):
   r=self.report();self.assertIn('REMOTE_CONTROL_NOT_CONFIRMED',r['blockers']);self.assertFalse(r['commands_enabled'])
+
+ def test_bms_snapshot_binds_actual_ha_device_and_zero_charge(self):
+  from battery_runtime import bms_snapshot
+  now=datetime.now(timezone.utc);soc='sensor.example_soc'
+  rows=[{'entity_id':soc,'state':'100','last_reported':now.isoformat()}]
+  for role,value in [('status','B_STATUS_PRESERVE_CHARGE'),('max_charge_power',5000),('peak_charge_power',0),('max_discharge_power',5000),('peak_discharge_power',5000)]:
+   rows.append({'entity_id':'sensor.example_b1_'+role,'state':str(value),'last_reported':now.isoformat(),'attributes':{'unit_of_measurement':'W'}})
+  class API:
+   def call(self,*args):return {'device_found':True,'rows':rows}
+  r=bms_snapshot(API(),soc,now);self.assertEqual(r['charge_conservative_ceiling_w'],0);self.assertEqual(r['discharge_conservative_ceiling_w'],5000);self.assertFalse(r['commands_authorized'])
+ def test_bms_does_not_infer_binding_when_device_missing(self):
+  from battery_runtime import bms_snapshot
+  class API:
+   def call(self,*args):return {'device_found':False,'rows':[]}
+  with self.assertRaises(ValueError):bms_snapshot(API(),'sensor.example_soc',datetime.now(timezone.utc))
