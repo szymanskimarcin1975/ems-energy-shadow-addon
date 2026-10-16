@@ -7,6 +7,7 @@ from pathlib import Path
 from weather_demand import stamp,number
 from building_balance import inspect
 from balance_quality import Quality
+from control_safety import Safety
 from dispatch_simulator import simulate
 from boiler_offline.g13 import tariff,ZONE
 
@@ -16,7 +17,7 @@ def value(states,entity,unit,at,age=240):
     if not 0<=(stamp(at)-stamp(s['last_reported'])).total_seconds()<=age:raise ValueError('stale_or_future_input:'+entity)
     return number(s['state'])
 
-def plan(states,prediction,at,config,options,building_profile=None):
+def plan(states,prediction,at,config,options,building_profile=None,input_safety=None):
     solar=options['observation']['solar_sources']; old=options['sources']
     evidence=config.get('m1_scope_evidence',{})
     if not isinstance(evidence,dict):evidence={}
@@ -36,8 +37,10 @@ def plan(states,prediction,at,config,options,building_profile=None):
     r['m1_scope']={'confirmed':scope_confirmed,'evidence':evidence if scope_confirmed else None,'meaning':'Whole-building grid exchange; not total load or pure PV'}
     r['balance']['m1_scope_confirmed']=scope_confirmed
     if scope_confirmed:r['active_control_readiness']['blockers'].remove('M1_SCOPE_UNCONFIRMED')
+    r['input_safety']=input_safety or {'status':'UNCONFIRMED','control_enabled':False}
     # Historical direction conventions; actual production PV is intentionally absent.
     try:
+        if input_safety is not None and input_safety.get('current_ha_set_valid') is not True:raise ValueError('inconsistent_solar_snapshot')
         grid=value(states,old['grid_kw'],'kW',at); battery=value(states,solar['b1_power'],'W',at)
         r['flows']={'grid_import_kw':max(-grid,0),'grid_export_kw':max(grid,0),
                     'battery_charge_w':max(battery,0),'battery_discharge_w':max(-battery,0),
@@ -135,6 +138,7 @@ class Planner:
             self.c.execute('PRAGMA journal_mode=WAL');self.c.execute('PRAGMA synchronous=FULL')
             self.c.execute('CREATE TABLE IF NOT EXISTS runs(id PRIMARY KEY,fingerprint,record)')
             self.quality=Quality(self.c)
+            self.safety=Safety(self.c)
         except Exception:
             self.c.close();raise
     def storage_guard(self):
@@ -142,10 +146,12 @@ class Planner:
         if sizes>=256*1024*1024 or shutil.disk_usage(self.path.parent).free<64*1024*1024:raise OSError('planning_storage_limit')
     def observe(self,states,at,options):
         self.storage_guard()
-        return self.quality.observe(states,at,options)
+        result=self.quality.observe(states,at,options)
+        self.safety.observe(states,at,options)
+        return result
     def run(self,states,prediction,at,config,options):
         self.storage_guard()
-        record=plan(states,prediction,at,config,options,self.quality.summary(at))
+        record=plan(states,prediction,at,config,options,self.quality.summary(at),self.safety.summary(at))
         digest=hashlib.sha256(json.dumps(dict(planning=config,observation=options['observation'],legacy_sources=options['sources']),sort_keys=True).encode()).hexdigest()
         record['planning_config_fingerprint']=digest
         self.c.execute('BEGIN IMMEDIATE')
