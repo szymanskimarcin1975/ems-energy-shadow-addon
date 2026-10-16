@@ -2,6 +2,7 @@
 External single-writer fencing and safe hardware fallback must be independently
 validated before setting enabled. Never disables or re-enables an old controller.
 """
+from contextlib import closing
 import fcntl
 import json
 import math
@@ -153,7 +154,7 @@ class Executor:
         with open(self.lock,'a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return 'BUSY'
-            with sqlite3.connect(self.db,timeout=1) as db:
+            with closing(sqlite3.connect(self.db,timeout=1)) as db:
                 db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, mode TEXT NOT NULL,status TEXT NOT NULL)')
                 row=db.execute('SELECT mode,status FROM commands WHERE id=?',(request_id,)).fetchone()
                 if row:return 'DUPLICATE_'+row[1] if row[0]==option else 'REQUEST_CONFLICT'

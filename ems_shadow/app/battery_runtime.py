@@ -1,4 +1,4 @@
-"""Read-only readiness worker. No actuator transport is constructed or invoked.
+"""Battery readiness and guarded execution worker. READ_ONLY is the default.
 Planning approval is distinct from device safety authority.
 """
 import argparse,json,os,re,signal,sys,threading
@@ -28,6 +28,7 @@ class ReadAPI:
             with urlopen(req,timeout=5) as r:return json.load(r)
         except Exception:raise RuntimeError("ha_read_failed") from None
 from battery_executor import Policy
+from battery_service import BatteryService,read_config
 from ownership import Ownership
 
 MEMORY_TEMPLATE = """{% set ns=namespace(rows=[]) %}{% for id in ids %}{% set s=states[id] %}{% if s is not none %}{% set ns.rows=ns.rows+[{'entity_id':id,'state':s.state,'last_reported':s.last_reported.isoformat(),'last_updated':s.last_updated.isoformat(),'last_changed':s.last_changed.isoformat()}] %}{% endif %}{% endfor %}{{ns.rows|to_json}}"""
@@ -110,6 +111,9 @@ def main():
     sources=options.get('solar_sources',{});api=ReadAPI(os.environ['SUPERVISOR_TOKEN'])
     stop=threading.Event();seq=0;root=Path(a.root);root.mkdir(parents=True,exist_ok=True)
     ownership=Ownership(root/'battery-ownership.sqlite',sources)
+    service=None
+    try:service=BatteryService(root,ownership,os.environ['SUPERVISOR_TOKEN'])
+    except Exception:pass
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
     while not stop.is_set():
         try:
@@ -125,6 +129,18 @@ def main():
             else:
                 if report['bms']['charge_conservative_ceiling_w']==0:report['blockers'].append('BMS_CHARGE_CEILING_ZERO')
                 if report['bms']['sources']['status']['state'] not in {'B_STATUS_STANDBY','B_STATUS_IDLE','B_STATUS_CHARGE','B_STATUS_DISCHARGE'}:report['blockers'].append('BMS_STATUS_NOT_APPROVED_FOR_ACTUATION')
+            try:
+                report['execution_service']=service.cycle(read_config(),profile) if service else {'executor_initialized':False,'effective_state':'INITIALIZATION_ERROR','actuation_policy_enabled':False}
+            except Exception:report['execution_service']={'executor_initialized':False,'effective_state':'EXECUTION_ERROR','actuation_policy_enabled':False}
+            execution=report['execution_service']
+            report['mode']=execution.get('requested_mode','READ_ONLY')
+            report['commands_enabled']=execution.get('actuation_policy_enabled',False)
+            counts=execution.get('command_status_counts',{})
+            report['commands_sent']=None if execution.get('delivery_uncertain') else counts.get('ACK',0)
+            if report['mode']=='ACTIVE':
+                report['state']=execution.get('effective_state','UNKNOWN')
+                report['blockers']=execution.get('safety_reasons',[])
+                if execution.get('actuation_policy_enabled') is not True:report['blockers']=report['blockers']+[report['state']]
             report['ownership']=ownership.state()
             report['owner_states_consistent']=report['shared_owner']['state']==report['ownership']['owner']
             if not report['owner_states_consistent']:report['blockers'].append('OWNERSHIP_MISMATCH_NO_AUTOMATIC_RECONCILIATION')
@@ -139,6 +155,9 @@ def main():
         atomic(root/'battery-heartbeat.json',{'pid':os.getpid(),'sequence':seq,'phase':'completed','completed_cycles':seq,'committed_cycles':0,'status':report['state'],'captured_at':datetime.now(timezone.utc).isoformat()})
         if a.cycles and seq>=a.cycles:break
         stop.wait(a.interval)
+    if service:
+        try:service.close()
+        except Exception:pass
     ownership.close()
     return 0
 if __name__=='__main__':raise SystemExit(main())

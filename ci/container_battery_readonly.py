@@ -33,8 +33,16 @@ with tempfile.TemporaryDirectory() as tmp:
   assert report['policy']['soc_min'] is None and report['policy']['soc_max'] is None
   heartbeat=json.loads((data/'observation-v1/battery-heartbeat.json').read_text())
   assert heartbeat['completed_cycles']==2 and heartbeat['committed_cycles']==0
-  dbs=list(data.rglob('*.sqlite'));assert len(dbs)==1 and dbs[0].name=='battery-ownership.sqlite'
-  with sqlite3.connect(dbs[0]) as db:
+  dbs=list(data.rglob('*.sqlite'));assert {p.name for p in dbs}=={'battery-ownership.sqlite','battery-execution.sqlite'}
+  assert report['execution_service']['executor_initialized'] is True
+  assert report['execution_service']['requested_mode']=='READ_ONLY'
+  assert report['execution_service']['effective_state']=='READ_ONLY'
+  assert report['execution_service']['cycles']==2
+  with sqlite3.connect(data/'observation-v1/battery-execution.sqlite') as execution:
+   assert execution.execute('pragma integrity_check').fetchone()[0]=='ok'
+   assert execution.execute('select count(*) from commands').fetchone()[0]==0
+   assert execution.execute('select cycles from runtime').fetchone()[0]==2
+  with sqlite3.connect(data/'observation-v1/battery-ownership.sqlite') as db:
    assert db.execute('pragma integrity_check').fetchone()[0]=='ok'
    assert db.execute('select name from owner').fetchone()[0]=='LEGACY'
    assert db.execute('select count(*) from audit').fetchone()[0]==0
