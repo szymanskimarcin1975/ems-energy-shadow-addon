@@ -24,6 +24,21 @@ class Tests(unittest.TestCase):
  def test_stale_dynamic_soc_still_rejected(self):
   a=list(fixture());a[0]['sensor.example_b1_soc']['last_reported']='2026-10-01T00:00:00+00:00'
   r=plan(*a);self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertIn('sensor.example_b1_soc',r['reason'])
+ def test_whole_building_is_conditional_not_confirmed(self):
+  r=plan(*fixture());self.assertEqual(len(r['building_decisions']),4)
+  self.assertFalse(r['active_control_readiness']['ready'])
+  self.assertEqual(r['building_candidate']['status'],'CONDITIONAL_ESTIMATE_ONLY')
+  for d in r['building_decisions']:
+   self.assertEqual(len(d['schedule']),24)
+   self.assertAlmostEqual(d['schedule'][0]['load_kwh'],.3)
+ def test_negative_blocks_whole_building_only(self):
+  a=list(fixture());a[0]['sensor.example_grid']['state']='2'
+  r=plan(*a);self.assertEqual(r['building_decisions'],[]);self.assertEqual(len(r['decisions']),4)
+  self.assertLess(r['balance']['candidate_building_w'],0)
+ def test_legacy_controller_state_audited_without_commands(self):
+  a=list(fixture());a[3]['legacy_controller_entities']=['automation.example_old']
+  a[0]['automation.example_old']={'state':'on'}
+  r=plan(*a);self.assertEqual(r['active_control_readiness']['legacy_controllers']['automation.example_old'],'on');self.assertFalse(r['control_enabled'])
  def test_missing_soc(self):
   a=list(fixture());del a[0]['sensor.example_b1_soc'];r=plan(*a);self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertEqual(r['decisions'],[])
  def test_missing_load(self):
