@@ -24,9 +24,9 @@ def main():
    publisher=subprocess.Popen([sys.executable,str(app/'observation'/'publisher.py'),str(enabled).lower()],start_new_session=True,stdin=subprocess.DEVNULL)
    if enabled:
     root=Path('/data/observation-v1');root.mkdir(exist_ok=True)
-    for role in ('solar','weather','boiler','demand'):
-     command=[sys.executable,str(app/'observation'/'demand_runtime.py')] if role=='demand' else [sys.executable,str(app/'observation'/'worker.py'),'--role',role]
-     g=IdentityProgressGuard(command,root/(role+'-heartbeat.json'),stall_timeout=45,idle_interval=20 if role=='demand' else INTERVALS[role],max_attempts=3,retry_delay=10,grace=1,kill_grace=.2)
+    for role in ('solar','weather','boiler','demand','battery'):
+     command=[sys.executable,str(app/'observation'/'demand_runtime.py')] if role=='demand' else ([sys.executable,str(app/'observation'/'battery_runtime.py')] if role=='battery' else [sys.executable,str(app/'observation'/'worker.py'),'--role',role])
+     g=IdentityProgressGuard(command,root/(role+'-heartbeat.json'),stall_timeout=45,idle_interval=20 if role in ('demand','battery') else INTERVALS[role],max_attempts=3,retry_delay=10,grace=1,kill_grace=.2)
      guards.append((role,g))
   except Exception:print('observation_init_failed; legacy_unaffected',flush=True)
   while not stopping and legacy.poll() is None:
