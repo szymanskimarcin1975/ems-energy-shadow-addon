@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from weather_demand import local_temperature, forecast_temperature, predict, stamp, number
 from cold_baseline import baseline
-from planning_runtime import Planner
+from planning_runtime import Planner, refresh_plan_report
 from ha_state_times import refresh
 from worker import ReadAPI, states_by_id, atomic
 from boiler_offline.g13 import tariff
@@ -184,11 +184,7 @@ def main():
                                 next_planning=time.monotonic()+300
                                 planner.last_report=result
                             elif getattr(planner,'last_report',None):
-                                result=dict(planner.last_report,balance_quality=planner.quality.summary(at),input_safety=planner.safety.summary(at),quality_updated_at=at)
-                                usable=(result['input_safety']['current_ha_set_valid'] and stamp(at)<=stamp(result['valid_until']) and result.get('status')=='HYPOTHETICAL_SCHEDULE_READY')
-                                result['current_plan_usable_for_simulation']=usable
-                                if not usable:
-                                    result.update(status='SUSPENDED_INPUT_QUALITY_OR_EXPIRED',decisions=[],building_decisions=[])
+                                result=refresh_plan_report(planner,at)
                                 atomic('/ha_config/ems_shadow/planning_report.yaml',result)
                 except (OSError,ValueError,KeyError,TypeError,sqlite3.Error):
                     try:
