@@ -3,7 +3,8 @@ from pathlib import Path
 from datetime import timedelta
 from test_planning import fixture,T
 from control_safety import Safety,HandoverDryRun
-from planning_runtime import plan
+from planning_runtime import plan,refresh_plan_report
+from types import SimpleNamespace
 
 def sample(i=0):
     args=list(fixture(T+timedelta(seconds=120*i)))
@@ -65,6 +66,20 @@ class TelemetryTests(unittest.TestCase):
         r=plan(*a,building_profile={'ready':True,'power_w':300},input_safety=self.s.summary(a[2]))
         self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertEqual(r['building_decisions'],[])
         self.assertFalse(r['control_enabled']);self.assertIn('FAULT_B1',r['input_safety']['last']['reasons'])
+    def test_current_bad_snapshot_hides_old_plan_immediately(self):
+        a=sample();self.s.observe(a[0],a[2],a[4])
+        previous=plan(*a,building_profile={'ready':True,'power_w':300},input_safety=self.s.summary(a[2]))
+        p=SimpleNamespace(last_report=previous,quality=SimpleNamespace(summary=lambda _:{}),safety=self.s)
+        b=sample(1);b[0]['sensor.example_b1_status']['state']='B_STATUS_FAULT';self.s.observe(b[0],b[2],b[4])
+        r=refresh_plan_report(p,b[2]);self.assertFalse(r['current_plan_usable_for_simulation']);self.assertEqual(r['building_decisions'],[])
+        self.assertEqual(len(p.last_report['building_decisions']),4)
+    def test_expired_plan_hidden_even_when_latest_input_good(self):
+        a=sample();self.s.observe(a[0],a[2],a[4])
+        previous=plan(*a,input_safety=self.s.summary(a[2]))
+        b=sample(4);self.s.observe(b[0],b[2],b[4])
+        p=SimpleNamespace(last_report=previous,quality=SimpleNamespace(summary=lambda _:{}),safety=self.s)
+        r=refresh_plan_report(p,b[2]);self.assertTrue(r['input_safety']['current_ha_set_valid'])
+        self.assertFalse(r['current_plan_usable_for_simulation']);self.assertEqual(r['decisions'],[])
 
 class HandoverTests(unittest.TestCase):
     def setUp(self):self.c=sqlite3.connect(':memory:',isolation_level=None);self.h=HandoverDryRun(self.c)
