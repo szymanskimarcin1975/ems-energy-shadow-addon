@@ -28,7 +28,10 @@ class Tests(unittest.TestCase):
         row=json.loads(self.s.c.execute('SELECT record FROM training').fetchone()[0])
         self.assertAlmostEqual(row['actual_register_delta_kwh'],1)
         self.assertEqual(row['actual_seconds'],3600)
-        self.assertEqual(self.s.forecast(at(182),[],C['weather_entity'])['status'],'insufficient_data')
+        result=self.s.forecast(at(182),[],C['weather_entity'])
+        self.assertEqual(result['status'],'persistence_baseline_uncalibrated')
+        self.assertAlmostEqual(result['horizon'][0]['scenarios']['workday']['prediction_kwh'],1)
+        self.assertFalse(result['horizon'][0]['scenarios']['workday']['temperature_used'])
     def test_duplicate(self):
         self.s.capture(at(0),states(0),C)
         self.assertEqual(self.s.capture(at(0),states(0),C),'duplicate')
