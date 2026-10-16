@@ -1,7 +1,7 @@
 name: EMS SHADOW amd64 build and isolated STDIN tests
 'on':
   push:
-    branches: [main, prepared/stdin-0.1.3-dev.1]
+    branches: [main, prepared/stdin-0.1.3-dev.1, candidate/battery-executor-20261016]
     paths: ['ems_shadow/**', 'ci/**', '.github/workflows/ems-shadow-amd64.yml']
   workflow_dispatch:
 permissions:
