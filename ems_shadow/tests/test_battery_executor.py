@@ -7,7 +7,7 @@ class HA:
  def __init__(self):self.calls=[];self.old='off';self.soc=50;self.fail=False;self.ack=True
  def state(self,e):
   if e=='automation.old':return {'state':self.old,'attributes':{'current':0}}
-  if e=='sensor.soc':return {'state':str(self.soc),'last_reported':(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()}
+  if e=='sensor.example_soc':return {'state':str(self.soc),'last_reported':(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()}
   if e.startswith('number.'):return {'state':'5000'}
   return {'state':'Charge from Solar Power','last_updated':datetime.now(timezone.utc).isoformat() if self.ack else '2000-01-01T00:00:00+00:00'}
  def select(self,e,o):
@@ -18,7 +18,7 @@ class Tests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.ha=HA()
   self.p=Policy(enabled=True,soc_min=30,soc_max=90,soc_bounds_approved=True,handover_verified=True,no_export_verified=True,fallback_verified=True)
  def executor(self,p=None):
-  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'])
+  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'])
  def run_command(self,x,id='r',mode='Charge from Solar Power'):
   return x.execute(id,mode,datetime.now(timezone.utc)+timedelta(seconds=30))
  def test_disabled_no_files_no_api(self):
