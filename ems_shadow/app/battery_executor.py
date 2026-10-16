@@ -47,18 +47,19 @@ class Executor:
     Local flock is only process exclusivity, NOT a fence against HA automations.
     """
     ALLOWED={'Charge from Solar Power','Discharge to Minimize Import'}
-    def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None,clock=None):
+    def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None,clock=None,control_entity=None):
         self.ha=ha;self.p=policy;self.db=db;self.lock=lock
         self.old=tuple(old_writers);self.soc=soc_entity;self.mode=mode_entity
         self.powers=tuple(power_entities);self.owner_entity=owner_entity;self.ownership=ownership;self.expected_epoch=expected_epoch
         self.clock=clock or (lambda: datetime.now(timezone.utc))
+        self.control_entity=control_entity
     def preflight(self):
         p=self.p
         if p.enabled is not True:return 'DISABLED'
         if not (p.soc_bounds_approved is True and p.handover_verified is True and p.no_export_verified is True and p.fallback_verified is True):return 'UNAPPROVED_SAFETY'
         if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (p.soc_min,p.soc_max)):return 'INVALID_SOC_LIMITS'
         if not 0<=p.soc_min<p.soc_max<=100:return 'INVALID_SOC_LIMITS'
-        if not self.old or len(self.powers)!=2 or not self.owner_entity:return 'INCOMPLETE_CONFIGURATION'
+        if not self.old or len(self.powers)!=2 or not self.owner_entity or not self.control_entity:return 'INCOMPLETE_CONFIGURATION'
         if self.local_owner_guard():return 'OWNERSHIP_UNCONFIRMED'
         return None
     def local_owner_guard(self):
@@ -69,7 +70,9 @@ class Executor:
         except Exception:return True
     def live_guard(self,option,now):
         if self.local_owner_guard():return 'OWNERSHIP_UNCONFIRMED'
-        if self.ha.state(self.owner_entity).get('state')!='EMS2':return 'SHARED_OWNER_NOT_EMS2' 
+        if self.ha.state(self.owner_entity).get('state')!='EMS2':return 'SHARED_OWNER_NOT_EMS2'
+        if self.ha.state(self.control_entity).get('state')!='Remote Control':return 'REMOTE_CONTROL_NOT_ACTIVE'
+        if self.ha.state(self.mode).get('state') in (None,'unknown','unavailable'):return 'COMMAND_INTERFACE_UNAVAILABLE' 
         for entity in self.old:
             s=self.ha.state(entity)
             if s.get('state')!='off' or s.get('attributes',{}).get('current')!=0:return 'OLD_WRITER_NOT_QUIESCENT'

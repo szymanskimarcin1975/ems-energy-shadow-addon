@@ -42,8 +42,17 @@ def shared_owner(states):
     state=found[0].get('state')
     return {'entity_id':found[0]['entity_id'],'state':state if state in ('UNKNOWN','LEGACY','EMS2') else 'UNKNOWN','source':'HA_REST_CURRENT_STATE_NOT_TELEMETRY_CLOCK'}
 
+def control_interface(states):
+    # Diagnostic discovery only; never supplies an actuator configuration.
+    required={'Remote Control','Maximize Self Consumption','Time of Use'}
+    found=[s for s in states.values() if s.get('entity_id','').startswith('select.') and required.issubset(set(s.get('attributes',{}).get('options',[])))]
+    if len(found)!=1:return {'state':'UNKNOWN','reason':'missing_or_ambiguous_control_interface','actuator_authority':False}
+    raw=found[0]
+    return {'entity_id':raw['entity_id'],'state':raw.get('state','UNKNOWN'),'ha_last_updated':raw.get('last_updated'),'actuator_authority':False,'meaning':'diagnostic discovery only; no automatic mode change'}
+
 def evaluate(states,sources,now,memory=None):
     result={};issues=[]
+    interface=control_interface(states)
     for role in ('b1_soc','b1_power','b1_status','ac_power','m1_import','m1_export'):
         entity=sources.get(role);raw=states.get(entity,{})
         value=raw.get('state');age=None;quality='MISSING'
@@ -65,8 +74,8 @@ def evaluate(states,sources,now,memory=None):
     return {'recorded_at':now.isoformat(),'valid_until':(now+timedelta(seconds=60)).isoformat(),'status_semantics':'snapshot; after valid_until process state is UNKNOWN','component':'battery_executor_readiness',
       'state':'BLOCKED','mode':'READ_ONLY','commands_enabled':False,'commands_sent':0,
       'policy':{'rated_wh':Policy().rated_wh,'max_charge_w':Policy().max_charge_w,'max_discharge_w':Policy().max_discharge_w,'soc_min':None,'soc_max':None,'soc_bounds_approved':False},
-      'blockers':['SOC_BOUNDS_UNAPPROVED','EXTERNAL_OWNERSHIP_FENCE_UNVERIFIED','PHYSICAL_FALLBACK_UNVERIFIED','NO_BATTERY_EXPORT_UNVERIFIED'],
-      'input_issues':issues,'inputs':result,'device_measurement_time_confirmed':False,'shared_owner':shared_owner(states)}
+      'blockers':['SOC_BOUNDS_UNAPPROVED','EXTERNAL_OWNERSHIP_FENCE_UNVERIFIED','PHYSICAL_FALLBACK_UNVERIFIED','NO_BATTERY_EXPORT_UNVERIFIED']+([] if interface['state']=='Remote Control' else ['REMOTE_CONTROL_NOT_CONFIRMED']),
+      'control_interface':interface,'input_issues':issues,'inputs':result,'device_measurement_time_confirmed':False,'shared_owner':shared_owner(states)}
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--options',default='/data/options.json');p.add_argument('--root',default='/data/observation-v1');p.add_argument('--report',default='/ha_config/ems_shadow/battery_executor_report.yaml');p.add_argument('--cycles',type=int);p.add_argument('--interval',type=float,default=20);a=p.parse_args()

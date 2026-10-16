@@ -6,6 +6,7 @@ from battery_executor import Executor,Policy
 class HA:
  def __init__(self):self.calls=[];self.old='off';self.soc=50;self.fail=False;self.ack=True
  def state(self,e):
+  if e=='select.example_control':return {'state':getattr(self,'control','Remote Control')}
   if e=='input_select.example_owner':return {'state':getattr(self,'owner','EMS2')}
   if e=='automation.old':return {'state':self.old,'attributes':{'current':0}}
   if e=='sensor.example_soc':return {'state':str(self.soc),'last_reported':(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()}
@@ -21,7 +22,7 @@ class Tests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.ha=HA()
   self.p=Policy(enabled=True,soc_min=30,soc_max=90,soc_bounds_approved=True,handover_verified=True,no_export_verified=True,fallback_verified=True)
  def executor(self,p=None):
-  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2)
+  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2,control_entity='select.example_control')
  def run_command(self,x,id='r',mode='Charge from Solar Power'):
   return x.execute(id,mode,datetime.now(timezone.utc)+timedelta(seconds=30))
  def test_disabled_no_files_no_api(self):
@@ -83,3 +84,12 @@ class Tests(unittest.TestCase):
   self.assertEqual(x.execute('late2','Charge from Solar Power',start+timedelta(seconds=30),now=start),'EXPIRED_REQUEST')
   with sqlite3.connect(x.db) as db:self.assertEqual(db.execute('SELECT status FROM commands').fetchone()[0],'REJECTED')
   self.assertEqual(self.ha.calls,[])
+
+ def test_non_remote_mode_blocks(self):
+  self.ha.control='Time of Use';self.assertEqual(self.run_command(self.executor()),'REMOTE_CONTROL_NOT_ACTIVE');self.assertEqual(self.ha.calls,[])
+ def test_missing_control_entity_blocks(self):
+  x=self.executor();x.control_entity=None;self.assertEqual(self.run_command(x),'INCOMPLETE_CONFIGURATION');self.assertEqual(self.ha.calls,[])
+ def test_unavailable_command_interface_blocks(self):
+  original=self.ha.state
+  self.ha.state=lambda e:{'state':'unavailable'} if e=='select.mode' else original(e)
+  self.assertEqual(self.run_command(self.executor()),'COMMAND_INTERFACE_UNAVAILABLE');self.assertEqual(self.ha.calls,[])

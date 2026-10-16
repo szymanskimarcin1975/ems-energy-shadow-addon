@@ -40,3 +40,11 @@ class Tests(unittest.TestCase):
   self.assertEqual(shared_owner({'a':x})['state'],'LEGACY')
   self.assertEqual(shared_owner({'a':x,'b':dict(x,entity_id='input_select.example_other')})['state'],'UNKNOWN')
   self.assertEqual(shared_owner({})['state'],'UNKNOWN')
+
+ def test_control_interface_discovery_never_authorizes(self):
+  from battery_runtime import control_interface
+  raw={'entity_id':'select.example_control','state':'Time of Use','attributes':{'options':['Remote Control','Maximize Self Consumption','Time of Use']}}
+  r=control_interface({'x':raw});self.assertEqual(r['state'],'Time of Use');self.assertFalse(r['actuator_authority'])
+  self.assertEqual(control_interface({'a':raw,'b':dict(raw,entity_id='select.example_other')})['state'],'UNKNOWN')
+ def test_missing_remote_mode_is_reported(self):
+  r=self.report();self.assertIn('REMOTE_CONTROL_NOT_CONFIRMED',r['blockers']);self.assertFalse(r['commands_enabled'])
