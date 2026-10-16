@@ -128,9 +128,14 @@ class Planner:
             self.quality=Quality(self.c)
         except Exception:
             self.c.close();raise
-    def run(self,states,prediction,at,config,options):
+    def storage_guard(self):
         sizes=sum(p.stat().st_size for p in (self.path,Path(str(self.path)+'-wal'),Path(str(self.path)+'-shm')) if p.exists())
         if sizes>=256*1024*1024 or shutil.disk_usage(self.path.parent).free<64*1024*1024:raise OSError('planning_storage_limit')
+    def observe(self,states,at,options):
+        self.storage_guard()
+        return self.quality.observe(states,at,options)
+    def run(self,states,prediction,at,config,options):
+        self.storage_guard()
         record=plan(states,prediction,at,config,options,self.quality.summary(at))
         digest=hashlib.sha256(json.dumps(dict(planning=config,observation=options['observation'],legacy_sources=options['sources']),sort_keys=True).encode()).hexdigest()
         record['planning_config_fingerprint']=digest
