@@ -13,6 +13,11 @@ class Tests(unittest.TestCase):
  def test_repeat_does_not_refresh(self):
   s,_,at,_,o=fixture();self.q.observe(s,at,o)
   at2=(T+timedelta(seconds=20)).isoformat();self.assertEqual(self.q.observe(s,at2,o),'REPEATED_HA_SNAPSHOT');self.assertEqual(self.q.summary(at2)['unique_ha_snapshots'],1)
+ def test_rest_cache_difference_not_a_new_ha_snapshot(self):
+  s,_,at,_,o=fixture();self.q.observe(s,at,o)
+  s['sensor.example_grid']['rest_state']='different_cached_state'
+  s['sensor.example_grid']['rest_last_reported']='2026-10-01T00:00:00+00:00'
+  self.assertEqual(self.q.observe(s,(T+timedelta(seconds=20)).isoformat(),o),'REPEATED_HA_SNAPSHOT')
  def test_negative_retained_and_rejected(self):
   s,_,at,_,o=fixture();s['sensor.example_grid']['state']='2';self.q.observe(s,at,o)
   row=json.loads(self.c.execute('select record from balance_checks').fetchone()[0]);self.assertEqual(row['candidate_building_w'],-1900);self.assertFalse(self.q.summary(at)['ready'])
