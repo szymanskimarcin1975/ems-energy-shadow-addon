@@ -7,13 +7,14 @@ from worker import atomic,INTERVALS
 from shutdown_budget import shutdown_all
 
 def main():
- app=Path(__file__).parent;guards=[];stopping=False;legacy=None;publisher=None;last_reports={}
+ app=Path(__file__).parent;guards=[];stopping=False;legacy=None;publisher=None;last_reports={};legacy_term_sent=False
  def shutdown(*_):
-  nonlocal stopping
+  nonlocal stopping,legacy_term_sent
   stopping=True
   # Immediately notify legacy gateway, not after optional-worker shutdowns.
-  if legacy is not None and legacy.poll() is None:
-   try:os.killpg(legacy.pid,signal.SIGTERM)
+  if not legacy_term_sent and legacy is not None and legacy.poll() is None:
+   try:
+    os.killpg(legacy.pid,signal.SIGTERM);legacy_term_sent=True
    except ProcessLookupError:pass
  previous={s:signal.signal(s,shutdown) for s in (signal.SIGTERM,signal.SIGINT)}
  legacy=subprocess.Popen([sys.executable,str(app/'staging'/'gateway.py')],start_new_session=True)
@@ -40,7 +41,7 @@ def main():
      g.state='UNKNOWN';print('observation_supervision_unknown; legacy_unaffected',flush=True)
    time.sleep(.1)
  finally:
-  result=shutdown_all(legacy,guards,publisher,budget=22)
+  result=shutdown_all(legacy,guards,publisher,budget=22,term_already_sent={'legacy'} if legacy_term_sent else ())
   print(json.dumps({'component':'observation_shutdown',**result}),flush=True)
   for s,h in previous.items():signal.signal(s,h)
  return 70 if result['state']=='UNKNOWN' else (legacy.returncode or 0)

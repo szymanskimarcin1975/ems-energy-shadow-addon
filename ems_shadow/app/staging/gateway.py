@@ -12,12 +12,14 @@ def signal_group(child, sig):
         except ProcessLookupError: pass
 
 def run(observer_command, controller_command=None, retry=10, grace=15, kill_grace=2):
-    stopping=False; observer=None; controller=None; next_start=0; exit_code=0
+    stopping=False; observer=None; controller=None; next_start=0; exit_code=0;term_sent=False
     def shutdown(*_):
-        nonlocal stopping
+        nonlocal stopping,term_sent
         stopping=True
         # Signal both process groups immediately, including export grandchildren.
-        signal_group(observer,signal.SIGTERM);signal_group(controller,signal.SIGTERM)
+        if not term_sent:
+            term_sent=True
+            signal_group(observer,signal.SIGTERM);signal_group(controller,signal.SIGTERM)
     previous={s:signal.signal(s,shutdown) for s in (signal.SIGTERM,signal.SIGINT)}
     try:
         observer=subprocess.Popen(observer_command,start_new_session=True,stdin=subprocess.DEVNULL)

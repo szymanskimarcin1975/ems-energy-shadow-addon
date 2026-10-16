@@ -1,7 +1,7 @@
 """One shared shutdown deadline; unknown identities are never signalled."""
 import os,signal,time
 
-def shutdown_all(legacy,guards,publisher=None,budget=22,grace=18):
+def shutdown_all(legacy,guards,publisher=None,budget=22,grace=18,term_already_sent=()):
  start=time.monotonic();targets=[];unknown=[]
  # Legacy and publisher are directly owned children; no PID discovery.
  for name,c in [('legacy',legacy),('publisher',publisher)]:
@@ -20,7 +20,8 @@ def shutdown_all(legacy,guards,publisher=None,budget=22,grace=18):
    return
   try:os.killpg(c.pid,sig)
   except ProcessLookupError:pass
- for n,c,g in targets:send(n,c,g,signal.SIGTERM)
+ for n,c,g in targets:
+  if n not in term_already_sent:send(n,c,g,signal.SIGTERM)
  while time.monotonic()-start<min(grace,budget) and any(c.poll() is None for _,c,_ in targets):time.sleep(.02)
  for n,c,g in targets:send(n,c,g,signal.SIGKILL)
  while time.monotonic()-start<budget and any(c.poll() is None for n,c,_ in targets if n not in unknown):time.sleep(.02)
