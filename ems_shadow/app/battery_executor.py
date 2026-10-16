@@ -47,10 +47,11 @@ class Executor:
     Local flock is only process exclusivity, NOT a fence against HA automations.
     """
     ALLOWED={'Charge from Solar Power','Discharge to Minimize Import'}
-    def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None):
+    def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None,clock=None):
         self.ha=ha;self.p=policy;self.db=db;self.lock=lock
         self.old=tuple(old_writers);self.soc=soc_entity;self.mode=mode_entity
         self.powers=tuple(power_entities);self.owner_entity=owner_entity;self.ownership=ownership;self.expected_epoch=expected_epoch
+        self.clock=clock or (lambda: datetime.now(timezone.utc))
     def preflight(self):
         p=self.p
         if p.enabled is not True:return 'DISABLED'
@@ -92,7 +93,7 @@ class Executor:
     def execute(self,request_id,option,expires_at,now=None):
         why=self.preflight()
         if why:return why # Disabled never opens SQLite, lock, or HA connection.
-        now=now or datetime.now(timezone.utc)
+        now=now or self.clock()
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',request_id or ''):return 'INVALID_REQUEST'
         if option not in self.ALLOWED:return 'FORBIDDEN_MODE'
         if expires_at.tzinfo is None or not now<expires_at<=now+timedelta(seconds=60):return 'EXPIRED_REQUEST'
@@ -104,18 +105,24 @@ class Executor:
                 row=db.execute('SELECT mode,status FROM commands WHERE id=?',(request_id,)).fetchone()
                 if row:return 'DUPLICATE_'+row[1] if row[0]==option else 'REQUEST_CONFLICT'
                 if db.execute("SELECT 1 FROM commands WHERE status IN ('PENDING','UNKNOWN')").fetchone():return 'UNKNOWN_REQUIRES_RECONCILIATION'
-                why=self.live_guard(option,now)
+                check_time=self.clock()
+                if not check_time<expires_at:return 'EXPIRED_REQUEST'
+                why=self.live_guard(option,check_time)
                 if why:return why
                 db.execute('INSERT INTO commands VALUES(?,?,?)',(request_id,option,'PENDING'));db.commit()
                 try:
                     # Recheck immediately before issuing. External fencing still mandatory.
-                    why=self.live_guard(option,now)
+                    check_time=self.clock()
+                    why='EXPIRED_REQUEST' if not check_time<expires_at else self.live_guard(option,check_time)
                     if why:
                         db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));db.commit();return why
+                    issued_at=self.clock()
+                    if not issued_at<expires_at:
+                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));db.commit();return 'EXPIRED_REQUEST'
                     self.ha.select(self.mode,option)
                     s=self.ha.state(self.mode)
                     stamp=datetime.fromisoformat(s['last_updated'])
-                    ack=s['state']==option and stamp.tzinfo is not None and stamp>=now
+                    ack=s['state']==option and stamp.tzinfo is not None and issued_at<=stamp<=self.clock()
                     status='ACK' if ack else 'UNKNOWN'
                 except Exception:status='UNKNOWN'
                 db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id));db.commit()

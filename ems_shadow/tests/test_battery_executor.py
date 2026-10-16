@@ -71,3 +71,15 @@ class Tests(unittest.TestCase):
   x=self.executor();x.ownership=None;self.assertEqual(self.run_command(x),'OWNERSHIP_UNCONFIRMED');self.assertEqual(self.ha.calls,[])
  def test_owner_epoch_change_blocks(self):
   x=self.executor();x.expected_epoch=3;self.assertEqual(self.run_command(x),'OWNERSHIP_UNCONFIRMED');self.assertEqual(self.ha.calls,[])
+
+ def test_deadline_expires_before_live_reads_no_send(self):
+  x=self.executor(); start=datetime.now(timezone.utc); times=iter([start+timedelta(seconds=31)])
+  x.clock=lambda:next(times)
+  self.assertEqual(x.execute('late','Charge from Solar Power',start+timedelta(seconds=30),now=start),'EXPIRED_REQUEST')
+  self.assertEqual(self.ha.calls,[])
+ def test_deadline_expires_during_final_validation_no_send(self):
+  x=self.executor(); start=datetime.now(timezone.utc); times=iter([start,start,start+timedelta(seconds=31)])
+  x.clock=lambda:next(times)
+  self.assertEqual(x.execute('late2','Charge from Solar Power',start+timedelta(seconds=30),now=start),'EXPIRED_REQUEST')
+  with sqlite3.connect(x.db) as db:self.assertEqual(db.execute('SELECT status FROM commands').fetchone()[0],'REJECTED')
+  self.assertEqual(self.ha.calls,[])
