@@ -47,7 +47,7 @@ def build(report,config,now,epoch):
   plan_id=hashlib.sha256(json.dumps(report,sort_keys=True,allow_nan=False).encode()).hexdigest()
   expires=min(now+timedelta(seconds=45),valid,end)
   intent=dict(request_id=request_id,option=option,maximum_power_w=watts,expires_at=expires.isoformat(),plan_id=plan_id,plan_generated_at=issued.isoformat(),plan_valid_until=valid.isoformat(),slot_start=start.isoformat(),slot_end=end.isoformat(),planning_config_fingerprint=expected)
-  return dict(status='PLAN_REQUEST_PREPARED',execution_mode_supported=option in ('Charge from Solar Power','Discharge to Minimize Import'),power_setpoint_policy='REJECT_IF_EXISTING_REMOTE_CEILING_EXCEEDS_PLAN; no automatic power write',hold_does_not_cancel_existing_command=True,pending_request=intent,advisory_only=report.get('whole_building_schedule_approved') is not True,scenario={'future_day_type':future,'pv_scenario':pv},ack_semantics='Fresh HA state readback, not physical energy execution')
+  return dict(status='PLAN_REQUEST_PREPARED',execution_mode_supported=option in ('Charge from Solar Power','Charge from Solar Power and Grid','Discharge to Minimize Import'),power_setpoint_policy='COMPOUND_GATEWAY_CLAMPS_TO_INVERTER_AND_LIVE_BMS; zero limits and SOC ceiling remain rejected',hold_does_not_cancel_existing_command=True,pending_request=intent,advisory_only=report.get('whole_building_schedule_approved') is not True,scenario={'future_day_type':future,'pv_scenario':pv},ack_semantics='Fresh HA state readback, not physical energy execution')
  except (KeyError,TypeError,ValueError,OverflowError) as e:
   return {'status':str(e) if isinstance(e,ValueError) else 'PLAN_INVALID','pending_request':None,'advisory_only':True}
 def read(config,now,epoch):

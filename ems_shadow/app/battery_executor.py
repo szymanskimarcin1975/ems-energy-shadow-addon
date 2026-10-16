@@ -55,6 +55,15 @@ class SupervisorHA:
         if reply.get('status')!='SERVICE_COMPLETED':raise GatewayRejected('gateway_rejected')
         return reply
 
+    def dispatch(self,entity,option,power_w,*,request_id,expires_at):
+        result=self._request('/services/script/ems_battery_command_gateway?return_response',
+          {'caller':'EMS2','operation':'dispatch','command_value':{'option':option,'power_w':power_w},
+           'request_id':request_id,'expires_at':expires_at.timestamp()})
+        reply=result.get('service_response',{}) if isinstance(result,dict) else {}
+        if reply.get('status')=='REJECTED':raise GatewayRejected('gateway_rejected_before_writes')
+        if reply.get('status')!='SERVICE_COMPLETED' or reply.get('request_id')!=request_id:raise RuntimeError('gateway_outcome_unknown')
+        return reply
+
 @dataclass(frozen=True)
 class Policy:
     enabled: bool=False
@@ -72,7 +81,8 @@ class Executor:
     """One idempotent mode command; PENDING/UNKNOWN require manual reconciliation.
     Local flock is only process exclusivity, NOT a fence against HA automations.
     """
-    ALLOWED={'Charge from Solar Power','Discharge to Minimize Import'}
+    CHARGES={'Charge from Solar Power','Charge from Solar Power and Grid'}
+    ALLOWED=CHARGES|{'Discharge to Minimize Import'}
     def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None,clock=None,control_entity=None,bms_sources=None,telemetry_check=None):
         self.ha=ha;self.p=policy;self.db=db;self.lock=lock
         self.old=tuple(old_writers);self.soc=soc_entity;self.mode=mode_entity
@@ -97,7 +107,7 @@ class Executor:
             state=self.ownership.state()
             return not (state.get('owner')=='EMS2' and state.get('epoch')==self.expected_epoch and state.get('commands_permitted') is True and state.get('external_fence_verified') is True)
         except Exception:return True
-    def bms_guard(self,option,now):
+    def bms_guard(self,option,now,setting_power=False):
         try:
             rows=self.ha.current_states(self.bms.values())
             status=rows[self.bms['status']]
@@ -105,7 +115,7 @@ class Executor:
             if not 0<=age<=180:return 'BMS_HA_UPDATE_UNCONFIRMED'
             if status['state'] not in {'B_STATUS_STANDBY','B_STATUS_IDLE','B_STATUS_CHARGE','B_STATUS_DISCHARGE'}:
                 return 'BMS_STATUS_NOT_APPROVED' # Preserve Charge is not declared a fault.
-            direction='charge' if option=='Charge from Solar Power' else 'discharge'
+            direction='charge' if option in self.CHARGES else 'discharge'
             ceiling=self.p.max_charge_w if direction=='charge' else self.p.max_discharge_w
             limits=[]
             for role in ('max_'+direction,'peak_'+direction):
@@ -118,12 +128,13 @@ class Executor:
                 limits.append(value)
             cap=min(ceiling,*limits)
             if cap<=0:return 'BMS_DIRECTION_LIMIT_ZERO'
+            self.direction_ceiling_w=cap
             remote=float(self.ha.state(self.powers[0 if direction=='charge' else 1])['state'])
-            if not math.isfinite(remote) or remote<0 or remote>cap:return 'REMOTE_LIMIT_EXCEEDS_BMS'
+            if not math.isfinite(remote) or remote<0 or (not setting_power and remote>cap):return 'REMOTE_LIMIT_EXCEEDS_BMS'
         except Exception:return 'BMS_READ_UNCONFIRMED'
         return None
 
-    def live_guard(self,option,now):
+    def live_guard(self,option,now,setting_power=False):
         try:
             quality=self.telemetry_check() if self.telemetry_check else 'TELEMETRY_CHECK_MISSING'
             if quality!='HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF':return quality
@@ -145,54 +156,73 @@ class Executor:
         except (KeyError,TypeError,ValueError):return 'INVALID_SOC'
         if not self.p.soc_min<=soc<=self.p.soc_max:return 'SOC_OUT_OF_RANGE'
         if option=='Discharge to Minimize Import' and soc<=self.p.soc_min:return 'SOC_RESERVE'
-        if option=='Charge from Solar Power' and soc>=self.p.soc_max:return 'SOC_CEILING'
+        if option in self.CHARGES and soc>=self.p.soc_max:return 'SOC_CEILING'
         for entity,limit in zip(self.powers,(self.p.max_charge_w,self.p.max_discharge_w)):
             try:
                 value=float(self.ha.state(entity)['state'])
                 if not math.isfinite(value) or not 0<=value<=limit:return 'POWER_LIMIT_UNSAFE'
             except (KeyError,TypeError,ValueError):return 'POWER_LIMIT_INVALID'
-        return self.bms_guard(option,now)
+        return self.bms_guard(option,now,setting_power=setting_power)
     def execute(self,request_id,option,expires_at,now=None,*,maximum_power_w=None,intent_check=None):
-        if maximum_power_w is not None and (type(maximum_power_w) not in (int,float) or not math.isfinite(maximum_power_w) or not 0<maximum_power_w<=5000):return 'PLAN_POWER_INVALID'
+        if maximum_power_w is not None and (type(maximum_power_w) not in (int,float) or not math.isfinite(maximum_power_w) or not 0<maximum_power_w):return 'PLAN_POWER_INVALID'
         why=self.preflight()
         if why:return why # Disabled never opens SQLite, lock, or HA connection.
         now=now or self.clock()
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',request_id or ''):return 'INVALID_REQUEST'
         if option not in self.ALLOWED:return 'FORBIDDEN_MODE'
+        if option=='Charge from Solar Power and Grid' and maximum_power_w is None:return 'GRID_CHARGE_REQUIRES_POWER_REQUEST'
         if expires_at.tzinfo is None or not now<expires_at<=now+timedelta(seconds=60):return 'EXPIRED_REQUEST'
         with open(self.lock,'a') as lock:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return 'BUSY'
             with closing(sqlite3.connect(self.db,timeout=1)) as db:
                 db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, mode TEXT NOT NULL,status TEXT NOT NULL)')
+                from dispatch_lifecycle import initialise,permit,begin,finish
+                initialise(db)
                 row=db.execute('SELECT mode,status FROM commands WHERE id=?',(request_id,)).fetchone()
                 if row:return 'DUPLICATE_'+row[1] if row[0]==option else 'REQUEST_CONFLICT'
                 if db.execute("SELECT 1 FROM commands WHERE status IN ('PENDING','UNKNOWN')").fetchone():return 'UNKNOWN_REQUIRES_RECONCILIATION'
+                lifecycle=permit(db,request_id)
+                if lifecycle:return lifecycle
                 check_time=self.clock()
                 if not check_time<expires_at:return 'EXPIRED_REQUEST'
-                why=self.live_guard(option,check_time)
+                why=self.live_guard(option,check_time,setting_power=maximum_power_w is not None)
                 if why:return why
                 if intent_check is not None and not intent_check():return 'PLAN_CHANGED_OR_EXPIRED'
-                if maximum_power_w is not None and float(self.ha.state(self.powers[0 if option=='Charge from Solar Power' else 1])['state'])>maximum_power_w:return 'PLAN_POWER_SETPOINT_EXCEEDS_REQUEST'
-                db.execute('INSERT INTO commands VALUES(?,?,?)',(request_id,option,'PENDING'));db.commit()
+                db.execute('INSERT INTO commands VALUES(?,?,?)',(request_id,option,'PENDING'))
+                begin(db,request_id,option,check_time)
+                db.commit()
                 try:
                     # Recheck immediately before issuing. External fencing still mandatory.
                     check_time=self.clock()
-                    why='EXPIRED_REQUEST' if not check_time<expires_at else self.live_guard(option,check_time)
+                    why='EXPIRED_REQUEST' if not check_time<expires_at else self.live_guard(option,check_time,setting_power=maximum_power_w is not None)
                     if not why and intent_check is not None and not intent_check():why='PLAN_CHANGED_OR_EXPIRED'
-                    if not why and maximum_power_w is not None and float(self.ha.state(self.powers[0 if option=='Charge from Solar Power' else 1])['state'])>maximum_power_w:why='PLAN_POWER_SETPOINT_EXCEEDS_REQUEST'
                     if why:
-                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));db.commit();return why
+                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));finish(db,request_id,'REJECTED',self.clock());db.commit();return why
                     issued_at=self.clock()
                     if not issued_at<expires_at:
-                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));db.commit();return 'EXPIRED_REQUEST'
-                    self.ha.select(self.mode,option,request_id=request_id,expires_at=expires_at)
+                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));finish(db,request_id,'REJECTED',self.clock());db.commit();return 'EXPIRED_REQUEST'
+                    applied=None
+                    if maximum_power_w is not None:
+                        requested=min(maximum_power_w,self.direction_ceiling_w,self.p.max_charge_w if option in self.CHARGES else self.p.max_discharge_w)
+                        requested=math.floor(requested)
+                        if requested<=0:raise GatewayRejected('zero_direction_limit')
+                        reply=self.ha.dispatch(self.mode,option,requested,request_id=request_id,expires_at=expires_at)
+                        applied=reply['applied_power_w']
+                        if type(applied) not in (int,float) or not math.isfinite(applied) or not 0<applied<=requested:raise RuntimeError('invalid_gateway_power_ack')
+                    else:self.ha.select(self.mode,option,request_id=request_id,expires_at=expires_at)
                     s=self.ha.state(self.mode)
                     stamp=datetime.fromisoformat(s['last_updated'])
                     ack=s['state']==option and stamp.tzinfo is not None and issued_at<=stamp<=self.clock()
-                    status='ACK' if ack else 'UNKNOWN'
+                    if applied is not None:
+                        power=self.ha.state(self.powers[0 if option in self.CHARGES else 1])
+                        pt=datetime.fromisoformat(power['last_updated'])
+                        ack=ack and float(power['state'])==applied and pt.tzinfo is not None and issued_at<=pt<=self.clock()
+                    status='ACK' if ack and self.clock()<expires_at else 'UNKNOWN'
                 except GatewayRejected:status='REJECTED'
                 except Exception:status='UNKNOWN'
-                db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id));db.commit()
+                db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id))
+                finish(db,request_id,status,self.clock())
+                db.commit()
                 return status
 

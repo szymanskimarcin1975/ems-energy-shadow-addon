@@ -53,6 +53,8 @@ with tempfile.TemporaryDirectory() as tmp:
   with sqlite3.connect(data/'observation-v1/battery-execution.sqlite') as execution:
    assert execution.execute('pragma integrity_check').fetchone()[0]=='ok'
    assert execution.execute('select count(*) from commands').fetchone()[0]==0
+   assert execution.execute('select count(*) from active_dispatch').fetchone()[0]==0
+   assert execution.execute('select count(*) from dispatch_audit').fetchone()[0]==0
    assert execution.execute('select count(*) from planner_requests').fetchone()[0]==1
    assert execution.execute('select cycles from runtime').fetchone()[0]==2
   with sqlite3.connect(data/'observation-v1/battery-ownership.sqlite') as db:

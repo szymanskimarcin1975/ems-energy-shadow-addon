@@ -52,12 +52,14 @@ class FullPath(unittest.TestCase):
      return {e:{'state':api.fault if e=='sensor.example_inverter' else '0x0','last_reported':api.source_at.isoformat()} for e in ids}
     return super().current_states(ids)
    def state(api,e):
-    if e in ('number.charge','number.discharge'):return {'state':str(api.remote)}
+    if e in ('number.charge','number.discharge'):return {'state':str(api.remote),'last_updated':datetime.now(timezone.utc).isoformat()}
     if e=='select.mode':return {'state':api.returned,'last_updated':datetime.now(timezone.utc).isoformat()}
     return super().state(e)
    def select(api,e,o,**kw):
     if getattr(api,'owner','EMS2')!='EMS2' or api.old!='off':raise AssertionError('synthetic_gateway_owner_rejected')
     api.returned=o;super().select(e,o,**kw)
+   def dispatch(api,e,o,power_w,**kw):
+    api.remote=power_w;api.select(e,o,**kw);return {'applied_power_w':power_w}
   self.ha=API();self.s=BatteryService(self.tmp.name,Local(),'synthetic',ha=self.ha);self.addCleanup(self.s.close)
   self.cfg=config();self.cfg['pending_request']=None;self.cfg['planner_bridge']=CFG;self.cfg['fault_sources']={'inverter_status':'sensor.example_inverter','vendor_status':'sensor.example_vendor'};self.profile=PROFILE
   for back in (240,120,0):
@@ -82,15 +84,15 @@ class FullPath(unittest.TestCase):
   self.ha.owner='LEGACY';self.assertEqual(self.cycle()['effective_state'],'OWNERSHIP_UNCONFIRMED');self.assertEqual(self.ha.calls,[])
  def test_expired_plan_rejected(self):
   self.write(report(self.now-timedelta(seconds=400)));self.assertIn('PLAN_EXPIRED_OR_FUTURE',self.cycle()['safety_reasons']);self.assertEqual(self.ha.calls,[])
- def test_power_mismatch_blocks_not_ignored(self):
-  r=report(self.now);r['household_advisory']['decisions'][0]['schedule'][0]['charge_ac_kwh']=1;self.write(r);self.assertEqual(self.cycle()['effective_state'],'PLAN_POWER_SETPOINT_EXCEEDS_REQUEST');self.assertEqual(self.ha.calls,[])
+ def test_power_setpoint_is_applied_through_gateway(self):
+  r=report(self.now);r['household_advisory']['decisions'][0]['schedule'][0]['charge_ac_kwh']=1;self.write(r);self.assertEqual(self.cycle()['effective_state'],'ACK');self.assertEqual(self.ha.remote,1000);self.assertEqual(len(self.ha.calls),1)
  def test_advisory_approval_required(self):
   r=report(self.now);r['whole_building_schedule_approved']=False;self.write(r);self.assertIn('PLAN_NOT_APPROVED_FOR_CONTROL',self.cycle()['safety_reasons']);self.assertEqual(self.ha.calls,[])
  def test_unknown_not_retried(self):
   self.ha.fail=True;self.assertEqual(self.cycle()['effective_state'],'UNKNOWN');self.ha.fail=False;self.assertEqual(self.cycle()['effective_state'],'DUPLICATE_UNKNOWN');self.assertEqual(len(self.ha.calls),1)
- def test_grid_charge_remains_fail_closed_until_gateway_extended(self):
+ def test_grid_charge_uses_compound_gateway(self):
   r=report(self.now);r['household_advisory']['decisions'][0]['schedule'][0]['pv_kwh']=0;self.write(r)
-  outcome=self.cycle();self.assertFalse(outcome['planner_bridge']['execution_mode_supported']);self.assertEqual(outcome['effective_state'],'FORBIDDEN_MODE');self.assertEqual(self.ha.calls,[])
+  outcome=self.cycle();self.assertTrue(outcome['planner_bridge']['execution_mode_supported']);self.assertEqual(outcome['effective_state'],'ACK');self.assertEqual(self.ha.calls[0][1],'Charge from Solar Power and Grid')
  def test_plan_changes_during_final_check_no_command(self):
   with patch.object(self.s,'plan_still_current',side_effect=[True,False]):r=self.cycle()
   self.assertEqual(r['effective_state'],'PLAN_CHANGED_OR_EXPIRED');self.assertEqual(self.ha.calls,[])

@@ -27,6 +27,11 @@ jobs:
         env:
           PYTHONPATH: ems_shadow/app/observation:ems_shadow/app:ems_shadow/app/staging:ems_shadow/app/diagnostic_export
         run: python3 -m unittest discover -s ci/weather_demand -v
+      - name: Compound gateway Jinja regression (synthetic states only)
+        run: |
+          python3 -m venv /tmp/ems-jinja-ci
+          /tmp/ems-jinja-ci/bin/pip install Jinja2==3.1.6
+          /tmp/ems-jinja-ci/bin/python -m unittest discover -s ci/gateway -v
       - name: Export regression tests with synthetic fixtures
         run: python3 -m unittest discover -s ems_shadow/app/diagnostic_export -v
       - name: Controller, gateway and disabled STDIN tests

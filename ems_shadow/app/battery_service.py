@@ -9,6 +9,7 @@ from soc_profile import planning_policy
 from telemetry_guard import snapshot
 from fault_guard import FaultGuard,READY
 from plan_bridge import read as read_plan,Journal
+from dispatch_lifecycle import initialise as lifecycle_init,state as lifecycle_state,hold as lifecycle_hold
 CONFIG_PATH=Path('/ha_config/ems_shadow/battery_executor_config.yaml')
 PROOFS=('bms_operating_envelope','physical_fallback','physical_no_export','old_command_reconciled','external_writer_fence')
 
@@ -57,6 +58,7 @@ class BatteryService:
    self.db.execute("INSERT OR IGNORE INTO runtime VALUES(1,0,'INITIALIZED')")
    self.fault_guard=FaultGuard(self.db)
    self.planner_journal=Journal(self.db)
+   lifecycle_init(self.db)
   except BaseException:self.db.close();raise
  def cycle(self,config,profile):
   if isinstance(self.ha,SupervisorHA):self.ha.deadline=time.monotonic()+10
@@ -109,7 +111,7 @@ class BatteryService:
   self.db.execute('UPDATE runtime SET cycles=cycles+1,last_result=? WHERE id=1',(result,))
   cycles=self.db.execute('SELECT cycles FROM runtime WHERE id=1').fetchone()[0]
   command_statuses=dict(self.db.execute('SELECT status,COUNT(*) FROM commands GROUP BY status'))
-  return {'planner_bridge':bridge,'fault_quality':fault_quality,'fault_recovery':dict(self.fault_guard.record),'telemetry_quality':telemetry_quality,'telemetry_age_limit_seconds':180,'telemetry_skew_limit_seconds':5,'new_command_block_does_not_cancel_active_command':True,'command_status_counts':command_statuses,'commands_ha_acknowledged':command_statuses.get('ACK',0),'delivery_uncertain':any(command_statuses.get(k,0) for k in ('PENDING','UNKNOWN')),'module':'battery_service','executor_initialized':True,'transport':'HA_QUEUED_COMMAND_GATEWAY','requested_mode':mode,'effective_state':result,'safety_reasons':reasons,'operational_parameters':expected,'planning_soc':planning,'safety_soc_bounds':bounds,'cycles':cycles,'pending_request_present':isinstance(intent,dict),'actuation_policy_enabled':enabled,'device_execution_confirmed':False,'ack_semantics':'ACK means new HA command state readback, not physical completion','automatic_legacy_shutdown':False,'automatic_replay_after_unknown':False}
+  return {'command_lifecycle':lifecycle_state(self.db),'hold':lifecycle_hold(self.db,self.clock(),bridge['status']) if bridge.get('pending_request') is None else None,'planner_bridge':bridge,'fault_quality':fault_quality,'fault_recovery':dict(self.fault_guard.record),'telemetry_quality':telemetry_quality,'telemetry_age_limit_seconds':180,'telemetry_skew_limit_seconds':5,'new_command_block_does_not_cancel_active_command':True,'command_status_counts':command_statuses,'commands_ha_acknowledged':command_statuses.get('ACK',0),'delivery_uncertain':any(command_statuses.get(k,0) for k in ('PENDING','UNKNOWN')),'module':'battery_service','executor_initialized':True,'transport':'HA_QUEUED_COMMAND_GATEWAY','requested_mode':mode,'effective_state':result,'safety_reasons':reasons,'operational_parameters':expected,'planning_soc':planning,'safety_soc_bounds':bounds,'cycles':cycles,'pending_request_present':isinstance(intent,dict),'actuation_policy_enabled':enabled,'device_execution_confirmed':False,'ack_semantics':'ACK means new HA command state readback, not physical completion','automatic_legacy_shutdown':False,'automatic_replay_after_unknown':False}
  def plan_still_current(self,config,intent):
   current=read_plan(config,self.clock(),self.local.state().get('epoch'))
   request=current.get('pending_request')
