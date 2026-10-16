@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory() as td:
         docker('network','create','--internal',network)
         docker('run','-d','--name',api,'--network',network,'--network-alias','supervisor','-v',str(Path('ci/weather_demand/full_mock_api.py').resolve())+':/mock.py:ro','--entrypoint','python','ems-demand:candidate','/mock.py')
         for phase,image in [('baseline','ems-demand:baseline'),('candidate','ems-demand:candidate'),('rollback','ems-demand:baseline')]:
-            docker('run','-d','-i','--name',app,'--network',network,'-v',str(data)+':/data','-v',str(ha)+':/ha_config','-e','SUPERVISOR_TOKEN=synthetic-only',image)
+            docker('run','-d','-i','--user',str(os.getuid())+':'+str(os.getgid()),'--name',app,'--network',network,'-v',str(data)+':/data','-v',str(ha)+':/ha_config','-e','SUPERVISOR_TOKEN=synthetic-only',image)
             deadline=time.monotonic()+60;confirmed=False
             while time.monotonic()<deadline:
                 try:
@@ -45,6 +45,11 @@ with tempfile.TemporaryDirectory() as td:
                 c=sqlite3.connect(db);assert c.execute('pragma integrity_check').fetchone()[0]=='ok';c.close()
             print('PASS',phase,'legacy_samples',previous,'all_sqlite_integrity_ok',flush=True)
         assert (data/'observation-v1/weather-demand-v1.sqlite').exists()
+    except Exception:
+        for name in (app,api):
+            log=subprocess.run(['docker','logs',name],capture_output=True,text=True,timeout=10)
+            print('synthetic_ci_logs',name,log.stdout,log.stderr,flush=True)
+        raise
     finally:
         subprocess.run(['docker','rm','-f',app,api],capture_output=True,timeout=30)
         subprocess.run(['docker','network','rm',network],capture_output=True,timeout=30)
