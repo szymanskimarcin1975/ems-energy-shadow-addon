@@ -1,5 +1,6 @@
 """Isolated image check, synthetic API only, no real HA address."""
 import json,os,sqlite3,subprocess,tempfile,uuid
+from datetime import datetime,timezone,timedelta
 from pathlib import Path
 
 def run(*a):
@@ -11,7 +12,10 @@ def run(*a):
 with tempfile.TemporaryDirectory() as tmp:
  root=Path(tmp);data=root/'data';ha=root/'ha';data.mkdir();ha.mkdir()
  (ha/'ems_shadow').mkdir()
- (ha/'ems_shadow/battery_executor_config.yaml').write_text(json.dumps({'mode':'READ_ONLY','fault_sources':{'inverter_status':'sensor.example_inverter_status','vendor_status':'sensor.example_vendor_status'},'telemetry_sources':{'m1_power':'sensor.example_m1_power','b1_power':'sensor.example_b1_power','soc':'sensor.example_b1_soc'}}))
+ (ha/'ems_shadow/battery_executor_config.yaml').write_text(json.dumps({'mode':'READ_ONLY','planner_bridge':{'enabled':True,'expected_fingerprint':'a'*64,'future_day_type':'workday','pv_scenario':'pv_estimate10'},'expected_epoch':0,'fault_sources':{'inverter_status':'sensor.example_inverter_status','vendor_status':'sensor.example_vendor_status'},'telemetry_sources':{'m1_power':'sensor.example_m1_power','b1_power':'sensor.example_b1_power','soc':'sensor.example_b1_soc'}}))
+ now=datetime.now(timezone.utc)
+ plan={'generated_at':now.isoformat(),'valid_until':(now+timedelta(seconds=360)).isoformat(),'planning_config_fingerprint':'a'*64,'status':'ADVISORY_HOUSEHOLD_SCHEDULE_READY','current_plan_usable_for_simulation':True,'input_safety':{'current_ha_set_valid':True},'whole_building_schedule_approved':False,'household_advisory':{'decisions':[{'future_day_type':'workday','pv_scenario':'pv_estimate10','schedule':[{'valid_for':now.replace(minute=0,second=0,microsecond=0).isoformat(),'hours':1,'load_kwh':0,'pv_kwh':5,'charge_ac_kwh':5,'discharge_ac_kwh':0}]}]}}
+ (ha/'ems_shadow/planning_report.yaml').write_text(json.dumps(plan))
  options=json.loads(Path('ems_shadow/tests/example_options.json').read_text())
  options.setdefault('observation',{})['enabled']=True
  options['observation']['solar_sources']={role:'sensor.example_'+({'ac_power':'ac_power','m1_import':'m1_import','m1_export':'m1_export'}.get(role,role)) for role in ('b1_soc','b1_power','b1_status','ac_power','m1_import','m1_export')}
@@ -42,10 +46,14 @@ with tempfile.TemporaryDirectory() as tmp:
   assert report['execution_service']['telemetry_quality']=='HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF'
   assert report['execution_service']['fault_quality']=='FAULT_RECOVERY_STABILISING'
   assert report['execution_service']['fault_recovery']['ready'] is False
+  assert report['execution_service']['planner_bridge']['status']=='PLAN_REQUEST_PREPARED'
+  assert report['execution_service']['planner_bridge']['pending_request']['maximum_power_w']==5000
+  assert report['execution_service']['planner_bridge']['advisory_only'] is True
   assert report['execution_service']['cycles']==2
   with sqlite3.connect(data/'observation-v1/battery-execution.sqlite') as execution:
    assert execution.execute('pragma integrity_check').fetchone()[0]=='ok'
    assert execution.execute('select count(*) from commands').fetchone()[0]==0
+   assert execution.execute('select count(*) from planner_requests').fetchone()[0]==1
    assert execution.execute('select cycles from runtime').fetchone()[0]==2
   with sqlite3.connect(data/'observation-v1/battery-ownership.sqlite') as db:
    assert db.execute('pragma integrity_check').fetchone()[0]=='ok'

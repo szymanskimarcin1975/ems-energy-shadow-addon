@@ -20,7 +20,7 @@ def load_history():
  except (OSError,ValueError):return None
 
 def finite(v):return type(v) in (float,int) and math.isfinite(v)
-def forecast(history,profile,issued_at,targets):
+def forecast(history,profile,issued_at,targets,allow_current=False):
  now=stamp(issued_at);hours={};rejected={};accepted=0;seen=set()
  provenance={'source_entity':None,'control_approved':False,'device_synchronisation_confirmed':False,'actual_energy_kwh':None}
  if isinstance(history,dict):
@@ -50,7 +50,7 @@ def forecast(history,profile,issued_at,targets):
  out=[]
  for target in targets:
   t=stamp(target)
-  if t<=now:raise ValueError('past_target')
+  if t<now or (t==now and not allow_current):raise ValueError('past_target')
   vals=[v for (hour,day),v in hours.items() if hour==t.astimezone(ZONE).hour]
   if len(vals)>=2:
    pred=median(vals);method='same_local_hour_median_actual_HA_aggregate';sample_range=[min(vals),max(vals)]
@@ -101,7 +101,10 @@ def schedule(states,at,config,options,profile,input_safety,soc_policy):
    pv[t]=vals
  first=(now+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
  targets=[(first+timedelta(hours=i)).isoformat() for i in range(24)]
- forecast_result=forecast(load_history(),profile,at,targets)
+ include_current=config.get('include_current_slot') is True
+ horizon_end=now+timedelta(hours=24)
+ if include_current:targets=[now.isoformat()]+[t for t in targets if stamp(t)<horizon_end]
+ forecast_result=forecast(load_history(),profile,at,targets,allow_current=include_current)
  if forecast_result['status']!='ADVISORY_UNCALIBRATED':raise ValueError('insufficient_household_observations')
  decisions=[]
  for future_type in ('workday','nonworkday'):
@@ -110,12 +113,15 @@ def schedule(states,at,config,options,profile,input_safety,soc_policy):
    for h in forecast_result['horizon']:
     t=stamp(h['valid_for']);local=t.astimezone(ZONE)
     workday=day if local.date()==now.astimezone(ZONE).date() else ('on' if future_type=='workday' else 'off')
-    zone=tariff(t,workday);solar_kwh=pv[t.isoformat()][scenario]
+    zone=tariff(t,workday)
+    end=min(t.replace(minute=0,second=0,microsecond=0)+timedelta(hours=1),horizon_end) if include_current else t+timedelta(hours=1)
+    hours=(end-t).total_seconds()/3600
+    solar_kwh=pv[t.replace(minute=0,second=0,microsecond=0).isoformat()][scenario]*hours
     # Slot starts at 15:00 and ends at 16:00: target is BEFORE the expensive window.
-    deadline=capacity if workday=='on' and local.hour==15 else None
-    slots.append(dict(load_kwh=h['prediction_kwh'],pv_kwh=solar_kwh,price_pln_kwh=rates[zone],hours=1,target_after_kwh=deadline))
-    meta.append(dict(valid_for=t.isoformat(),tariff=zone,load_kwh=h['prediction_kwh'],pv_kwh=solar_kwh,load_method=h['method']))
+    deadline=capacity if workday=='on' and end.astimezone(ZONE).hour==16 and end.astimezone(ZONE).minute==0 else None
+    slots.append(dict(load_kwh=h['prediction_kwh']*hours,pv_kwh=solar_kwh,price_pln_kwh=rates[zone],hours=hours,target_after_kwh=deadline))
+    meta.append(dict(valid_for=t.isoformat(),valid_to=end.isoformat(),hours=hours,tariff=zone,load_kwh=h['prediction_kwh']*hours,pv_kwh=solar_kwh,load_method=h['method']))
    result=simulate_deadlines(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,float(config['simulation_charge_eff']),float(config['simulation_discharge_eff']))
    for row,m in zip(result['schedule'],meta):row.update(m,reason='Advisory optimisation from actual historical HA aggregates or observed persistence; not device authority')
    decisions.append(dict(result,scope='CONDITIONAL_WHOLE_BUILDING_NOT_APPROVED',future_day_type=future_type,pv_scenario=scenario))
- return {'forecast':forecast_result,'decisions':decisions,'charge_ceiling_kw':charge,'peak_guard':peak_guard,'planning_min_soc_percent':minimum,'planning_max_soc_percent':100,'pv_issued_at':issued.isoformat(),'control_enabled':False,'prices_contract_verified':False,'workday_soc_deadline':{'local_time':'16:00','target_percent':100,'partial_current_hour_not_modelled':True,'current_deadline_unmodelled':day=='on' and now.astimezone(ZONE).hour==15,'physical_feasibility_confirmed':False}}
+ return {'forecast':forecast_result,'decisions':decisions,'charge_ceiling_kw':charge,'peak_guard':peak_guard,'planning_min_soc_percent':minimum,'planning_max_soc_percent':100,'pv_issued_at':issued.isoformat(),'control_enabled':False,'prices_contract_verified':False,'workday_soc_deadline':{'local_time':'16:00','target_percent':100,'partial_current_hour_not_modelled':not include_current,'current_deadline_unmodelled':not include_current and day=='on' and now.astimezone(ZONE).hour==15,'physical_feasibility_confirmed':False}}

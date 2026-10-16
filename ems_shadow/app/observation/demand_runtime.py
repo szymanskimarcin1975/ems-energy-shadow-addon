@@ -105,12 +105,12 @@ class Store:
         recent=[json.loads(r[0]) for r in self.c.execute('SELECT record FROM captures ORDER BY id DESC LIMIT 181')][::-1]
         persistence=baseline(recent,at)
         local=recent[-1].get('local',{}) if recent else {}
-        result={'local_temperature_input':local,'accuracy_improvement_validated':False,'issued_at':at,'control_enabled':False,'billing_approved':False,'horizon':[]}
+        result={'temperature_model_enabled':False,'local_temperature_input':local,'accuracy_improvement_validated':False,'issued_at':at,'control_enabled':False,'billing_approved':False,'horizon':[]}
         for i in range(24):
             t=target+timedelta(hours=i)
             value=forecast_temperature(forecasts,at,t.isoformat(),source)
             feature=temperature_feature(local,value,at,t.isoformat())
-            scenarios={d:predict(rows,at,t.astimezone(ZONE).hour,d,feature['temperature_c']) for d in ('workday','nonworkday')}
+            scenarios={d:predict(rows,at,t.astimezone(ZONE).hour,d,None) for d in ('workday','nonworkday')}
             result['horizon'].append({'valid_for':t.isoformat(),'forecast_temperature_c':value,'temperature_feature':feature,'scenarios':scenarios,
                 'g13_scenarios':{'workday':tariff(t,'on'),'nonworkday':tariff(t,'off')}})
         for h in result['horizon']:
@@ -169,7 +169,7 @@ def main():
                 report={'generated_at':at,'valid_until':(stamp(at)+timedelta(seconds=45)).isoformat(),'status':prediction['status'],'capture_quality':quality,
                     'captures':store.c.execute('SELECT COUNT(*) FROM captures').fetchone()[0],
                     'training_rows':prediction['training_rows'],'predictions':store.c.execute('SELECT COUNT(*) FROM predictions').fetchone()[0],
-                    'source_fingerprint':store.fingerprint,'model_version':'weather-neighbours-v2+local-feature+persistence-v1','local_temperature_input':prediction['local_temperature_input'],'temperature_accuracy_improvement_validated':False,
+                    'source_fingerprint':store.fingerprint,'model_version':'weather-response-held-disabled+persistence-v1','temperature_model_enabled':False,'local_temperature_input':prediction['local_temperature_input'],'temperature_accuracy_improvement_validated':False,
                     'control_enabled':False,'horizon':prediction['horizon']}
                 atomic('/ha_config/ems_shadow/demand_report.yaml',report)
                 try:

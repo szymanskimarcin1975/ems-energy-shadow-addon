@@ -8,6 +8,7 @@ from battery_executor import Executor,Policy,SupervisorHA
 from soc_profile import planning_policy
 from telemetry_guard import snapshot
 from fault_guard import FaultGuard,READY
+from plan_bridge import read as read_plan,Journal
 CONFIG_PATH=Path('/ha_config/ems_shadow/battery_executor_config.yaml')
 PROOFS=('bms_operating_envelope','physical_fallback','physical_no_export','old_command_reconciled','external_writer_fence')
 
@@ -55,6 +56,7 @@ class BatteryService:
    self.db.execute('CREATE TABLE IF NOT EXISTS runtime(id INTEGER PRIMARY KEY CHECK(id=1),cycles INTEGER NOT NULL,last_result TEXT NOT NULL)')
    self.db.execute("INSERT OR IGNORE INTO runtime VALUES(1,0,'INITIALIZED')")
    self.fault_guard=FaultGuard(self.db)
+   self.planner_journal=Journal(self.db)
   except BaseException:self.db.close();raise
  def cycle(self,config,profile):
   if isinstance(self.ha,SupervisorHA):self.ha.deadline=time.monotonic()+10
@@ -63,7 +65,12 @@ class BatteryService:
   telemetry_quality=snapshot(self.ha,telemetry_sources,self.clock())
   fault_sources=config.get('fault_sources',{})
   fault_quality=self.fault_guard.observe(self.ha,fault_sources,self.clock())
+  bridge_config=config.get('planner_bridge',{})
+  bridge=read_plan(bridge_config,now,config.get('expected_epoch')) if bridge_config.get('enabled') is True else {'status':'PLAN_BRIDGE_DISABLED','pending_request':None,'advisory_only':True}
   reasons=proof_reasons(config,now)
+  if bridge_config.get('enabled') is True:
+   if bridge.get('advisory_only') is True:reasons.append('PLAN_NOT_APPROVED_FOR_CONTROL')
+   if bridge.get('status') not in ('PLAN_REQUEST_PREPARED','PLAN_HOLD_NO_NEW_COMMAND'):reasons.append(bridge['status'])
   if fault_quality!=READY:reasons.append(fault_quality)
   if telemetry_quality!='HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF':reasons.append(telemetry_quality)
   if mode not in ('READ_ONLY','ACTIVE'):reasons.append('INVALID_EXECUTION_MODE')
@@ -87,19 +94,26 @@ class BatteryService:
   owner=FencedOwnership(self.local,self.ha,config,self.clock)
   self.executor=Executor(self.ha,policy,self.root/'battery-execution.sqlite',self.root/'battery-commands.lock',old_writers=old,soc_entity=sources.get('soc'),mode_entity=sources.get('command_mode'),power_entities=[sources.get('charge_limit'),sources.get('discharge_limit')],owner_entity=config.get('owner_entity'),ownership=owner,expected_epoch=config.get('expected_epoch'),clock=self.clock,control_entity=sources.get('control_mode'),bms_sources=config.get('bms_sources'),telemetry_check=lambda:self.live_quality(telemetry_sources,fault_sources))
   result='READ_ONLY' if mode=='READ_ONLY' else 'BLOCKED_SAFETY'
-  intent=config.get('pending_request')
+  intent=bridge.get('pending_request') if bridge_config.get('enabled') is True else config.get('pending_request')
+  if bridge_config.get('enabled') is True and config.get('pending_request') is not None:
+   enabled=False;result='MANUAL_AND_PLANNER_REQUEST_CONFLICT'
   # READ_ONLY does not consume requests, fetch actuator state, or call services.
   if enabled:
    preflight=self.executor.preflight()
    if preflight:result=preflight;enabled=False
    elif not isinstance(intent,dict):result='ACTIVE_IDLE_NO_REQUEST'
    else:
-    try:result=self.executor.execute(intent['request_id'],intent['option'],datetime.fromisoformat(intent['expires_at']))
+    try:result=self.executor.execute(intent['request_id'],intent['option'],datetime.fromisoformat(intent['expires_at']),maximum_power_w=intent.get('maximum_power_w'),intent_check=(lambda:self.plan_still_current(bridge_config,intent)) if bridge_config.get('enabled') is True else None)
     except (ValueError,TypeError,KeyError):result='INVALID_REQUEST'
+  self.planner_journal.observe(bridge,result)
   self.db.execute('UPDATE runtime SET cycles=cycles+1,last_result=? WHERE id=1',(result,))
   cycles=self.db.execute('SELECT cycles FROM runtime WHERE id=1').fetchone()[0]
   command_statuses=dict(self.db.execute('SELECT status,COUNT(*) FROM commands GROUP BY status'))
-  return {'fault_quality':fault_quality,'fault_recovery':dict(self.fault_guard.record),'telemetry_quality':telemetry_quality,'telemetry_age_limit_seconds':180,'telemetry_skew_limit_seconds':5,'new_command_block_does_not_cancel_active_command':True,'command_status_counts':command_statuses,'commands_ha_acknowledged':command_statuses.get('ACK',0),'delivery_uncertain':any(command_statuses.get(k,0) for k in ('PENDING','UNKNOWN')),'module':'battery_service','executor_initialized':True,'transport':'HA_QUEUED_COMMAND_GATEWAY','requested_mode':mode,'effective_state':result,'safety_reasons':reasons,'operational_parameters':expected,'planning_soc':planning,'safety_soc_bounds':bounds,'cycles':cycles,'pending_request_present':isinstance(intent,dict),'actuation_policy_enabled':enabled,'device_execution_confirmed':False,'ack_semantics':'ACK means new HA command state readback, not physical completion','automatic_legacy_shutdown':False,'automatic_replay_after_unknown':False}
+  return {'planner_bridge':bridge,'fault_quality':fault_quality,'fault_recovery':dict(self.fault_guard.record),'telemetry_quality':telemetry_quality,'telemetry_age_limit_seconds':180,'telemetry_skew_limit_seconds':5,'new_command_block_does_not_cancel_active_command':True,'command_status_counts':command_statuses,'commands_ha_acknowledged':command_statuses.get('ACK',0),'delivery_uncertain':any(command_statuses.get(k,0) for k in ('PENDING','UNKNOWN')),'module':'battery_service','executor_initialized':True,'transport':'HA_QUEUED_COMMAND_GATEWAY','requested_mode':mode,'effective_state':result,'safety_reasons':reasons,'operational_parameters':expected,'planning_soc':planning,'safety_soc_bounds':bounds,'cycles':cycles,'pending_request_present':isinstance(intent,dict),'actuation_policy_enabled':enabled,'device_execution_confirmed':False,'ack_semantics':'ACK means new HA command state readback, not physical completion','automatic_legacy_shutdown':False,'automatic_replay_after_unknown':False}
+ def plan_still_current(self,config,intent):
+  current=read_plan(config,self.clock(),self.local.state().get('epoch'))
+  request=current.get('pending_request')
+  return current.get('advisory_only') is False and isinstance(request,dict) and request['plan_id']==intent['plan_id'] and request['request_id']==intent['request_id']
  def live_quality(self,telemetry_sources,fault_sources):
   quality=self.fault_guard.observe(self.ha,fault_sources,self.clock())
   if quality!=READY:return quality

@@ -152,7 +152,8 @@ class Executor:
                 if not math.isfinite(value) or not 0<=value<=limit:return 'POWER_LIMIT_UNSAFE'
             except (KeyError,TypeError,ValueError):return 'POWER_LIMIT_INVALID'
         return self.bms_guard(option,now)
-    def execute(self,request_id,option,expires_at,now=None):
+    def execute(self,request_id,option,expires_at,now=None,*,maximum_power_w=None,intent_check=None):
+        if maximum_power_w is not None and (type(maximum_power_w) not in (int,float) or not math.isfinite(maximum_power_w) or not 0<maximum_power_w<=5000):return 'PLAN_POWER_INVALID'
         why=self.preflight()
         if why:return why # Disabled never opens SQLite, lock, or HA connection.
         now=now or self.clock()
@@ -171,11 +172,15 @@ class Executor:
                 if not check_time<expires_at:return 'EXPIRED_REQUEST'
                 why=self.live_guard(option,check_time)
                 if why:return why
+                if intent_check is not None and not intent_check():return 'PLAN_CHANGED_OR_EXPIRED'
+                if maximum_power_w is not None and float(self.ha.state(self.powers[0 if option=='Charge from Solar Power' else 1])['state'])>maximum_power_w:return 'PLAN_POWER_SETPOINT_EXCEEDS_REQUEST'
                 db.execute('INSERT INTO commands VALUES(?,?,?)',(request_id,option,'PENDING'));db.commit()
                 try:
                     # Recheck immediately before issuing. External fencing still mandatory.
                     check_time=self.clock()
                     why='EXPIRED_REQUEST' if not check_time<expires_at else self.live_guard(option,check_time)
+                    if not why and intent_check is not None and not intent_check():why='PLAN_CHANGED_OR_EXPIRED'
+                    if not why and maximum_power_w is not None and float(self.ha.state(self.powers[0 if option=='Charge from Solar Power' else 1])['state'])>maximum_power_w:why='PLAN_POWER_SETPOINT_EXCEEDS_REQUEST'
                     if why:
                         db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));db.commit();return why
                     issued_at=self.clock()
