@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from weather_demand import local_temperature, forecast_temperature, predict, stamp, number
 from cold_baseline import baseline
+from planning_runtime import Planner
 from worker import ReadAPI, states_by_id, atomic
 from boiler_offline.g13 import tariff
 
@@ -123,6 +124,7 @@ def main():
     p.add_argument('--options',default='/data/options.json')
     p.add_argument('--root',default='/data/observation-v1')
     p.add_argument('--stop-after-cycles',type=int)
+    p.add_argument('--planning-config',default='/ha_config/ems_shadow/planning_sources.yaml')
     args=p.parse_args()
     o=json.loads(Path(args.options).read_text())['observation']
     if o.get('enabled') is not True:return 78
@@ -133,7 +135,7 @@ def main():
     api=ReadAPI(os.environ['SUPERVISOR_TOKEN'])
     stop=threading.Event()
     for s in (signal.SIGTERM,signal.SIGINT):signal.signal(s,lambda *_:stop.set())
-    seq=0;commits=0;forecasts=[];next_forecast=0
+    seq=0;commits=0;forecasts=[];next_forecast=0;planner=None;next_planning=0
     try:
         while not stop.is_set():
             phase={'pid':os.getpid(),'sequence':seq,'phase':'polling'}
@@ -159,6 +161,20 @@ def main():
                     'source_fingerprint':store.fingerprint,'model_version':'weather-neighbours-v1+persistence-v1',
                     'control_enabled':False,'horizon':prediction['horizon']}
                 atomic('/ha_config/ems_shadow/demand_report.yaml',report)
+                try:
+                    planning_path=Path(args.planning_config)
+                    if planning_path.exists():
+                        if planning_path.stat().st_size>65536:raise ValueError('planning_config_too_large')
+                        planning_config=json.loads(planning_path.read_text())
+                        if planning_config.get('enabled') is True and time.monotonic()>=next_planning:
+                            if planner is None:planner=Planner(root/'planning-v1.sqlite')
+                            result=planner.run(states,prediction,at,planning_config,json.loads(Path(args.options).read_text()))
+                            atomic('/ha_config/ems_shadow/planning_report.yaml',result)
+                            next_planning=time.monotonic()+300
+                except (OSError,ValueError,KeyError,TypeError,sqlite3.Error):
+                    try:
+                        atomic('/ha_config/ems_shadow/planning_report.yaml',{'generated_at':at,'valid_until':(stamp(at)+timedelta(seconds=45)).isoformat(),'status':'PLANNING_ERROR','control_enabled':False})
+                    except OSError:pass
             except (OSError,ValueError,KeyError,TypeError):
                 status='API_OR_DATA_ERROR'
             seq+=1
@@ -166,7 +182,9 @@ def main():
             atomic(root/'demand-heartbeat.json',{'pid':os.getpid(),'sequence':seq,'phase':'completed','completed_cycles':seq,'committed_cycles':commits,'status':status,'captured_at':datetime.now(timezone.utc).isoformat()})
             if args.stop_after_cycles and seq>=args.stop_after_cycles:break
             stop.wait(20)
-    finally:store.c.close()
+    finally:
+        if planner is not None:planner.c.close()
+        store.c.close()
     return 0
 
 if __name__=='__main__':raise SystemExit(main())
