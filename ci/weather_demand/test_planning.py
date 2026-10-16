@@ -25,7 +25,7 @@ class Tests(unittest.TestCase):
   a=list(fixture());a[0]['sensor.example_b1_soc']['last_reported']='2026-10-01T00:00:00+00:00'
   r=plan(*a);self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertIn('sensor.example_b1_soc',r['reason'])
  def test_whole_building_is_conditional_not_confirmed(self):
-  r=plan(*fixture());self.assertEqual(len(r['building_decisions']),4)
+  r=plan(*fixture(),building_profile={'ready':True,'power_w':300});self.assertEqual(len(r['building_decisions']),4)
   self.assertFalse(r['active_control_readiness']['ready'])
   self.assertEqual(r['building_candidate']['status'],'CONDITIONAL_ESTIMATE_ONLY')
   for d in r['building_decisions']:
