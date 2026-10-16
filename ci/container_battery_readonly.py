@@ -49,6 +49,8 @@ with tempfile.TemporaryDirectory() as tmp:
   assert report['execution_service']['planner_bridge']['status']=='PLAN_REQUEST_PREPARED'
   assert report['execution_service']['planner_bridge']['pending_request']['maximum_power_w']==5000
   assert report['execution_service']['planner_bridge']['advisory_only'] is True
+  assert report['execution_service']['dispatch_contract']=='EMS2_COMPOUND_V28'
+  assert report['execution_service']['alternate_select_transport_available'] is False
   assert report['execution_service']['cycles']==2
   with sqlite3.connect(data/'observation-v1/battery-execution.sqlite') as execution:
    assert execution.execute('pragma integrity_check').fetchone()[0]=='ok'

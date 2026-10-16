@@ -57,7 +57,7 @@ class FullPath(unittest.TestCase):
     return super().state(e)
    def select(api,e,o,**kw):
     if getattr(api,'owner','EMS2')!='EMS2' or api.old!='off':raise AssertionError('synthetic_gateway_owner_rejected')
-    api.returned=o;super().select(e,o,**kw)
+    api.returned=o;super().record_dispatch(e,o,**kw)
    def dispatch(api,e,o,power_w,**kw):
     api.remote=power_w;api.select(e,o,**kw);return {'applied_power_w':power_w}
   self.ha=API();self.s=BatteryService(self.tmp.name,Local(),'synthetic',ha=self.ha);self.addCleanup(self.s.close)

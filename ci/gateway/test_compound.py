@@ -45,8 +45,8 @@ class Harness:
     s=self.states[target];s.state=str(data.get('value',data.get('option')));s.last_updated=NOW+timedelta(milliseconds=1)
     if step['action']=='number.set_value' and self.break_after_power:self.break_after_power(self)
    elif 'stop' in step:raise Stop()
- def run(self,option='Charge from Solar Power and Grid',watts=5000,caller='EMS2'):
-  self.ctx.update(caller=caller,operation='dispatch',command_value={'option':option,'power_w':watts},request_id='synthetic_request',expires_at=(NOW+timedelta(seconds=45)).timestamp())
+ def run(self,option='Charge from Solar Power and Grid',watts=5000,caller='EMS2',plan_id='a'*64,owner_epoch=2,operation='dispatch'):
+  self.ctx.update(caller=caller,operation=operation,command_value={'option':option,'power_w':watts},request_id='synthetic_request',plan_id=plan_id,owner_epoch=owner_epoch,expires_at=(NOW+timedelta(seconds=45)).timestamp())
   try:self.seq([branch(BIND)])
   except Stop:pass
   return self.ctx.get('reply')
@@ -82,3 +82,17 @@ class Tests(unittest.TestCase):
   old={'mode':'queued','sequence':[{'variables':{'reply':{}}},{'stop':'legacy remains unchanged'}]};new=extend(old,BIND);self.assertEqual(new['sequence'][0],old['sequence'][0]);self.assertEqual(new['sequence'][2:],old['sequence'][1:]);self.assertEqual(len(old['sequence']),2)
  def test_bool_power_invalid(self):
   h=Harness();self.assertEqual(h.run(watts=True)['status'],'REJECTED');self.assertEqual(h.calls,[])
+
+ def test_response_identity_and_before_write_rejection(self):
+  h=Harness();h.states[BIND['owner']].state='LEGACY';r=h.run()
+  self.assertEqual(r['gateway_contract'],'EMS2_COMPOUND_V28');self.assertEqual(r['plan_id'],'a'*64);self.assertEqual(r['owner_epoch'],2);self.assertFalse(r['writes_started']);self.assertEqual(r['owner'],'LEGACY');self.assertEqual(h.calls,[])
+ def test_partial_response_marks_write_started(self):
+  h=Harness();h.break_after_power=lambda a:setattr(a.states[BIND['owner']],'state','LEGACY');r=h.run()
+  self.assertTrue(r['writes_started']);self.assertEqual(r['status'],'PARTIAL_OR_UNKNOWN');self.assertEqual(r['plan_id'],'a'*64)
+
+ def test_scalar_ems2_operations_cannot_bypass_dispatch(self):
+  for operation in ('command_mode','control_mode','charge_limit','discharge_limit','timeout'):
+   h=Harness();r=h.run(operation=operation);self.assertEqual(r['status'],'REJECTED');self.assertFalse(r['writes_started']);self.assertEqual(h.calls,[])
+ def test_missing_plan_or_bad_epoch_no_writes(self):
+  for plan,epoch in (('',2),('bad',2),('a'*64,True),('a'*64,-1)):
+   h=Harness();r=h.run(plan_id=plan,owner_epoch=epoch);self.assertEqual(r['status'],'REJECTED');self.assertFalse(r['writes_started']);self.assertEqual(h.calls,[])

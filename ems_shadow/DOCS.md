@@ -66,3 +66,23 @@ code 0.1.2 in a separately approved higher-version recovery package is not an ex
 old-image restoration. Do not restore older SQLite automatically. Recovery package
 0.1.4-recovery.1 is not published by this candidate. Full Supervisor update/recovery
 has not been tested; standalone container tests do not replace that prerequisite.
+
+
+## 0.1.4-observation.28 — correlated dispatch only
+
+The production executor has no `SupervisorHA.select()` transport and rejects
+requests without explicit planned power and a SHA-256 plan identifier. All writes
+use the queued compound gateway contract `EMS2_COMPOUND_V28`. The EMS2 gateway
+branch rejects older scalar operations before writes; LEGACY logic is unchanged.
+Responses must match request ID, plan ID, ownership epoch and gateway contract.
+Only an explicit matching REJECTED reply with `writes_started: false` is a clean
+rejection. Missing, malformed, partial, mismatched or timed-out outcomes persist as
+UNKNOWN with no automatic replay. Successful replies also require EMS2 ownership,
+matching mode, valid applied power and fresh HA readback; ownership and plan are
+checked again after transport. HA ACK does not prove physical device completion.
+A separate command_identity table in the new execution database binds deduplication
+to plan, epoch and requested power. No old ledger migration is performed.
+Install the matching generated gateway branch while EMS2 remains READ_ONLY and
+LEGACY owns control. The original LEGACY suffix must compare equal before/after.
+Do not enable ACTIVE based only on these tests: device termination, fallback,
+M1-loss behaviour, no battery export and BMS safety evidence remain mandatory.

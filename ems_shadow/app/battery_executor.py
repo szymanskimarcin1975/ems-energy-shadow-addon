@@ -44,24 +44,21 @@ class SupervisorHA:
         if len(result)!=len(rows) or set(result)!=set(ids):raise ValueError('bms_snapshot_incomplete')
         return result # HA current State metadata, never proof of physical sample time.
 
-    def select(self,entity,option,*,request_id=None,expires_at=None):
-        # Both controllers use the HA queued script. There is no direct device
-        # service path in this transport. The production gateway denies EMS2.
-        if not request_id or expires_at is None:raise GatewayRejected('gateway_request_missing')
-        result=self._request('/services/script/ems_battery_command_gateway?return_response',
-          {'caller':'EMS2','operation':'command_mode','command_value':option,
-           'request_id':request_id,'expires_at':expires_at.timestamp()})
-        reply=result.get('service_response',{}) if isinstance(result,dict) else {}
-        if reply.get('status')!='SERVICE_COMPLETED':raise GatewayRejected('gateway_rejected')
-        return reply
-
-    def dispatch(self,entity,option,power_w,*,request_id,expires_at):
+    def dispatch(self,entity,option,power_w,*,request_id,expires_at,plan_id,owner_epoch):
+        # Sole production write transport. Correlate even a negative reply before
+        # interpreting it; only an explicit pre-write rejection is unambiguous.
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',request_id or '') or not re.fullmatch(r'[a-f0-9]{64}',plan_id or '') or type(owner_epoch) is not int or owner_epoch<0:
+            raise GatewayRejected('invalid_local_dispatch_identity_before_transport')
         result=self._request('/services/script/ems_battery_command_gateway?return_response',
           {'caller':'EMS2','operation':'dispatch','command_value':{'option':option,'power_w':power_w},
-           'request_id':request_id,'expires_at':expires_at.timestamp()})
-        reply=result.get('service_response',{}) if isinstance(result,dict) else {}
-        if reply.get('status')=='REJECTED':raise GatewayRejected('gateway_rejected_before_writes')
-        if reply.get('status')!='SERVICE_COMPLETED' or reply.get('request_id')!=request_id:raise RuntimeError('gateway_outcome_unknown')
+           'request_id':request_id,'expires_at':expires_at.timestamp(),'plan_id':plan_id,'owner_epoch':owner_epoch})
+        reply=result.get('service_response') if isinstance(result,dict) else None
+        if not isinstance(reply,dict) or reply.get('gateway_contract')!='EMS2_COMPOUND_V28' or reply.get('request_id')!=request_id or reply.get('plan_id')!=plan_id or type(reply.get('owner_epoch')) is not int or reply['owner_epoch']!=owner_epoch:
+            raise RuntimeError('gateway_identity_or_outcome_unknown')
+        if reply.get('status')=='REJECTED' and reply.get('writes_started') is False:
+            raise GatewayRejected('gateway_confirmed_rejection_before_writes')
+        if reply.get('status')!='SERVICE_COMPLETED' or reply.get('writes_started') is not True or reply.get('owner')!='EMS2' or reply.get('option')!=option:
+            raise RuntimeError('gateway_outcome_unknown')
         return reply
 
 @dataclass(frozen=True)
@@ -163,10 +160,12 @@ class Executor:
                 if not math.isfinite(value) or not 0<=value<=limit:return 'POWER_LIMIT_UNSAFE'
             except (KeyError,TypeError,ValueError):return 'POWER_LIMIT_INVALID'
         return self.bms_guard(option,now,setting_power=setting_power)
-    def execute(self,request_id,option,expires_at,now=None,*,maximum_power_w=None,intent_check=None):
+    def execute(self,request_id,option,expires_at,now=None,*,maximum_power_w=None,intent_check=None,plan_id=None):
         if maximum_power_w is not None and (type(maximum_power_w) not in (int,float) or not math.isfinite(maximum_power_w) or not 0<maximum_power_w):return 'PLAN_POWER_INVALID'
         why=self.preflight()
         if why:return why # Disabled never opens SQLite, lock, or HA connection.
+        if maximum_power_w is None:return 'PLAN_POWER_REQUIRED'
+        if not re.fullmatch(r'[a-f0-9]{64}',plan_id or ''):return 'PLAN_ID_REQUIRED'
         now=now or self.clock()
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',request_id or ''):return 'INVALID_REQUEST'
         if option not in self.ALLOWED:return 'FORBIDDEN_MODE'
@@ -177,10 +176,14 @@ class Executor:
             except BlockingIOError:return 'BUSY'
             with closing(sqlite3.connect(self.db,timeout=1)) as db:
                 db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, mode TEXT NOT NULL,status TEXT NOT NULL)')
+                db.execute('CREATE TABLE IF NOT EXISTS command_identity(request_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,owner_epoch INTEGER NOT NULL,requested_power_w REAL NOT NULL)')
                 from dispatch_lifecycle import initialise,permit,begin,finish
                 initialise(db)
                 row=db.execute('SELECT mode,status FROM commands WHERE id=?',(request_id,)).fetchone()
-                if row:return 'DUPLICATE_'+row[1] if row[0]==option else 'REQUEST_CONFLICT'
+                if row:
+                    identity=db.execute('SELECT plan_id,owner_epoch,requested_power_w FROM command_identity WHERE request_id=?',(request_id,)).fetchone()
+                    if identity is None:return 'UNKNOWN_IDENTITY_REQUIRES_RECONCILIATION'
+                    return 'DUPLICATE_'+row[1] if row[0]==option and identity==(plan_id,self.expected_epoch,maximum_power_w) else 'REQUEST_CONFLICT'
                 if db.execute("SELECT 1 FROM commands WHERE status IN ('PENDING','UNKNOWN')").fetchone():return 'UNKNOWN_REQUIRES_RECONCILIATION'
                 lifecycle=permit(db,request_id)
                 if lifecycle:return lifecycle
@@ -190,6 +193,7 @@ class Executor:
                 if why:return why
                 if intent_check is not None and not intent_check():return 'PLAN_CHANGED_OR_EXPIRED'
                 db.execute('INSERT INTO commands VALUES(?,?,?)',(request_id,option,'PENDING'))
+                db.execute('INSERT INTO command_identity VALUES(?,?,?,?)',(request_id,plan_id,self.expected_epoch,maximum_power_w))
                 begin(db,request_id,option,check_time)
                 db.commit()
                 try:
@@ -202,15 +206,11 @@ class Executor:
                     issued_at=self.clock()
                     if not issued_at<expires_at:
                         db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));finish(db,request_id,'REJECTED',self.clock());db.commit();return 'EXPIRED_REQUEST'
-                    applied=None
-                    if maximum_power_w is not None:
-                        requested=min(maximum_power_w,self.direction_ceiling_w,self.p.max_charge_w if option in self.CHARGES else self.p.max_discharge_w)
-                        requested=math.floor(requested)
-                        if requested<=0:raise GatewayRejected('zero_direction_limit')
-                        reply=self.ha.dispatch(self.mode,option,requested,request_id=request_id,expires_at=expires_at)
-                        applied=reply['applied_power_w']
-                        if type(applied) not in (int,float) or not math.isfinite(applied) or not 0<applied<=requested:raise RuntimeError('invalid_gateway_power_ack')
-                    else:self.ha.select(self.mode,option,request_id=request_id,expires_at=expires_at)
+                    requested=math.floor(min(maximum_power_w,self.direction_ceiling_w,self.p.max_charge_w if option in self.CHARGES else self.p.max_discharge_w))
+                    if requested<=0:raise GatewayRejected('zero_direction_limit_before_transport')
+                    reply=self.ha.dispatch(self.mode,option,requested,request_id=request_id,expires_at=expires_at,plan_id=plan_id,owner_epoch=self.expected_epoch)
+                    applied=reply['applied_power_w']
+                    if type(applied) not in (int,float) or not math.isfinite(applied) or not 0<applied<=requested:raise RuntimeError('invalid_gateway_power_ack')
                     s=self.ha.state(self.mode)
                     stamp=datetime.fromisoformat(s['last_updated'])
                     ack=s['state']==option and stamp.tzinfo is not None and issued_at<=stamp<=self.clock()
@@ -218,7 +218,10 @@ class Executor:
                         power=self.ha.state(self.powers[0 if option in self.CHARGES else 1])
                         pt=datetime.fromisoformat(power['last_updated'])
                         ack=ack and float(power['state'])==applied and pt.tzinfo is not None and issued_at<=pt<=self.clock()
-                    status='ACK' if ack and self.clock()<expires_at else 'UNKNOWN'
+                    # An ownership or plan change after writes is UNKNOWN, never REJECTED.
+                    still_authorized=self.local_owner_guard() is False and self.ha.state(self.owner_entity).get('state')=='EMS2'
+                    still_current=intent_check is None or intent_check()
+                    status='ACK' if ack and still_authorized and still_current and self.clock()<expires_at else 'UNKNOWN'
                 except GatewayRejected:status='REJECTED'
                 except Exception:status='UNKNOWN'
                 db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id))

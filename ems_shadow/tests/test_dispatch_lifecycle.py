@@ -22,7 +22,7 @@ class Tests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.path=Path(self.tmp.name)/'db.sqlite';self.ha=API()
   self.policy=Policy(enabled=True,soc_min=0,soc_max=100,soc_bounds_approved=True,handover_verified=True,no_export_verified=True,fallback_verified=True)
   self.x=Executor(self.ha,self.policy,self.path,Path(self.tmp.name)/'lock',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2,clock=lambda:datetime.now(timezone.utc)+timedelta(seconds=self.ha.offset),control_entity='select.example_control',telemetry_check=lambda:'HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF',bms_sources={k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')})
- def execute(self,id='request',option='Charge from Solar Power and Grid',watts=5000):return self.x.execute(id,option,datetime.now(timezone.utc)+timedelta(seconds=45),maximum_power_w=watts)
+ def execute(self,id='request',option='Charge from Solar Power and Grid',watts=5000):return self.x.execute(id,option,datetime.now(timezone.utc)+timedelta(seconds=45),maximum_power_w=watts,plan_id='a'*64)
  def test_grid_charge_power_and_fresh_ack(self):self.assertEqual(self.execute(),'ACK');self.assertEqual(self.ha.calls,[('Charge from Solar Power and Grid',5000)])
  def test_clamp_to_live_peak(self):
   self.ha.peak_charge=1234;self.assertEqual(self.execute(),'ACK');self.assertEqual(self.ha.power,1234)
@@ -78,7 +78,7 @@ class Tests(unittest.TestCase):
   self.assertEqual(self.execute('next'),'UNKNOWN_REQUIRES_RECONCILIATION')
  def test_real_transport_compound_gateway_only(self):
   from unittest.mock import patch
-  ha=SupervisorHA('synthetic');reply={'status':'SERVICE_COMPLETED','request_id':'test','applied_power_w':1000}
+  ha=SupervisorHA('synthetic');reply={'status':'SERVICE_COMPLETED','request_id':'test','applied_power_w':1000,'plan_id':'a'*64,'owner_epoch':2,'owner':'EMS2','gateway_contract':'EMS2_COMPOUND_V28','writes_started':True,'option':'Charge from Solar Power and Grid'}
   with patch.object(ha,'_request',return_value={'service_response':reply}) as call:
-   self.assertEqual(ha.dispatch('select.example_mode','Charge from Solar Power and Grid',1000,request_id='test',expires_at=datetime.now(timezone.utc)+timedelta(seconds=30)),reply)
+   self.assertEqual(ha.dispatch('select.example_mode','Charge from Solar Power and Grid',1000,request_id='test',plan_id='a'*64,owner_epoch=2,expires_at=datetime.now(timezone.utc)+timedelta(seconds=30)),reply)
    self.assertEqual(call.call_args.args[0],'/services/script/ems_battery_command_gateway?return_response');self.assertEqual(call.call_args.args[1]['operation'],'dispatch')
