@@ -151,7 +151,7 @@ def main():
                     if snapshot_options.get('refresh_ha_state_snapshot') is True:
                         raw_options=json.loads(Path(args.options).read_text())
                         solar=raw_options['observation']['solar_sources']
-                        ids=[config['local_entity'],config['energy'],raw_options['sources']['grid_kw']]+[solar[k] for k in ('ac_power','b1_power','b1_soc')]
+                        ids=[config['local_entity'],config['energy'],raw_options['sources']['grid_kw']]+[solar[k] for k in ('ac_power','b1_power','b1_soc','b1_status')]
                         states=refresh(api,states,ids)
                 at=datetime.now(timezone.utc).isoformat()
                 atomic(root/'demand-heartbeat.json',dict(phase,phase='writing'))
@@ -184,7 +184,7 @@ def main():
                                 next_planning=time.monotonic()+300
                                 planner.last_report=result
                             elif getattr(planner,'last_report',None):
-                                result=dict(planner.last_report,balance_quality=planner.quality.summary(at),quality_updated_at=at)
+                                result=dict(planner.last_report,balance_quality=planner.quality.summary(at),input_safety=planner.safety.summary(at),quality_updated_at=at)
                                 atomic('/ha_config/ems_shadow/planning_report.yaml',result)
                 except (OSError,ValueError,KeyError,TypeError,sqlite3.Error):
                     try:
