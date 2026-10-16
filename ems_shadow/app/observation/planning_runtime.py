@@ -18,15 +18,24 @@ def value(states,entity,unit,at,age=240):
 
 def plan(states,prediction,at,config,options,building_profile=None):
     solar=options['observation']['solar_sources']; old=options['sources']
+    evidence=config.get('m1_scope_evidence',{})
+    if not isinstance(evidence,dict):evidence={}
+    scope_confirmed=(evidence.get('scope')=='whole_building_grid_exchange' and evidence.get('confirmed_by')=='installation_owner' and bool(evidence.get('confirmed_at')))
+    if scope_confirmed:
+        try: scope_confirmed=stamp(evidence['confirmed_at'])<=stamp(at)
+        except (ValueError,TypeError): scope_confirmed=False
     r={'generated_at':at,'valid_until':(stamp(at)+timedelta(seconds=360)).isoformat(),
        'control_enabled':False,'mode':'SIMULATION_ONLY','whole_building_schedule_approved':False,
-       'limitations':['Building scope and device synchronisation unconfirmed','Boiler load excludes the rest of the house',
+       'limitations':['Device synchronisation and complete AC source inventory unconfirmed','Boiler load excludes the rest of the house',
        'All-site PV allocation to boiler is hypothetical','Efficiency and reserve are scenario assumptions',
        'No CWU or CO scheduling; no device commands','No calibrated forecast uncertainty'],
        'balance':inspect(states.get(solar['ac_power'],{}),states.get(old['grid_kw'],{}),at),
        'decisions':[],'building_decisions':[],
        'active_control_readiness':{'ready':False,'ownership':'LEGACY_NOT_TOUCHED',
         'blockers':['M1_SCOPE_UNCONFIRMED','DEVICE_TIME_SYNC_UNCONFIRMED','RESERVE_AND_EFFICIENCY_UNVERIFIED','PRICES_NOT_CONTRACT_VERIFIED','FORECAST_UNCALIBRATED','SINGLE_WRITER_HANDOVER_NOT_EXECUTED']}}
+    r['m1_scope']={'confirmed':scope_confirmed,'evidence':evidence if scope_confirmed else None,'meaning':'Whole-building grid exchange; not total load or pure PV'}
+    r['balance']['m1_scope_confirmed']=scope_confirmed
+    if scope_confirmed:r['active_control_readiness']['blockers'].remove('M1_SCOPE_UNCONFIRMED')
     # Historical direction conventions; actual production PV is intentionally absent.
     try:
         grid=value(states,old['grid_kw'],'kW',at); battery=value(states,solar['b1_power'],'W',at)
@@ -93,12 +102,12 @@ def plan(states,prediction,at,config,options,building_profile=None):
         r['balance_quality']=building_profile or {'ready':False,'status':'INSUFFICIENT_QUALIFIED_SNAPSHOTS'}
         candidate=(building_profile or {}).get('power_w')
         r['building_candidate']={'status':'BLOCKED_INVALID_BALANCE',
-             'topology_confirmed':False,'measurement_energy_kwh':None,
+             'topology_confirmed':False,'m1_scope_confirmed':scope_confirmed,'measurement_energy_kwh':None,
              'method':'rolling_HA_snapshot_median_persistence_uncalibrated',
              'temperature_response_identified':False,'uncertainty_calibrated':False}
         if r['balance'].get('status')=='DIAGNOSTIC_ONLY' and (building_profile or {}).get('ready') is True and candidate is not None and candidate>=0:
             r['building_candidate'].update(status='CONDITIONAL_ESTIMATE_ONLY',power_w=candidate,
-                assumption='M1 at whole-site grid connection, one represented AC inverter, aligned device snapshots; unconfirmed')
+                assumption=('M1 whole-building grid scope confirmed by owner; AC source inventory and device synchronisation unconfirmed' if scope_confirmed else 'M1 scope, AC source inventory and device synchronisation unconfirmed'))
             for d in r['decisions']:
                 slots=[];times=[]
                 for entry in d['schedule']:
