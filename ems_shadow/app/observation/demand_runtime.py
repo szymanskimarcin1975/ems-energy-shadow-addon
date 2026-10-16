@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from weather_demand import local_temperature, forecast_temperature, predict, stamp, number
 from cold_baseline import baseline
 from planning_runtime import Planner
+from ha_state_times import refresh
 from worker import ReadAPI, states_by_id, atomic
 from boiler_offline.g13 import tariff
 
@@ -144,6 +145,14 @@ def main():
             status='COMPLETED'
             try:
                 states=states_by_id(api.call('GET','/states'))
+                snapshot_config_path=Path(args.planning_config)
+                if snapshot_config_path.exists():
+                    snapshot_options=json.loads(snapshot_config_path.read_text())
+                    if snapshot_options.get('refresh_ha_state_snapshot') is True:
+                        raw_options=json.loads(Path(args.options).read_text())
+                        solar=raw_options['observation']['solar_sources']
+                        ids=[config['local_entity'],config['energy'],raw_options['sources']['grid_kw']]+[solar[k] for k in ('ac_power','b1_power','b1_soc')]
+                        states=refresh(api,states,ids)
                 at=datetime.now(timezone.utc).isoformat()
                 atomic(root/'demand-heartbeat.json',dict(phase,phase='writing'))
                 quality=store.capture(at,states,config)
