@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 from weather_demand import stamp,number
 from building_balance import inspect
+from balance_quality import Quality
 from dispatch_simulator import simulate
 from boiler_offline.g13 import tariff,ZONE
 
@@ -15,7 +16,7 @@ def value(states,entity,unit,at,age=240):
     if not 0<=(stamp(at)-stamp(s['last_reported'])).total_seconds()<=age:raise ValueError('stale_or_future_input:'+entity)
     return number(s['state'])
 
-def plan(states,prediction,at,config,options):
+def plan(states,prediction,at,config,options,building_profile=None):
     solar=options['observation']['solar_sources']; old=options['sources']
     r={'generated_at':at,'valid_until':(stamp(at)+timedelta(seconds=360)).isoformat(),
        'control_enabled':False,'mode':'SIMULATION_ONLY','whole_building_schedule_approved':False,
@@ -89,12 +90,13 @@ def plan(states,prediction,at,config,options):
                      scope='BOILER_ONLY_HYPOTHETICAL_PV_AND_BATTERY_ALLOCATION',not_full_building_dispatch=True))
         # A separate, conditional whole-building persistence estimate. This is
         # forecasting from an instantaneous observation, never kWh measurement.
-        candidate=r['balance'].get('candidate_building_w')
+        r['balance_quality']=building_profile or {'ready':False,'status':'INSUFFICIENT_QUALIFIED_SNAPSHOTS'}
+        candidate=(building_profile or {}).get('power_w')
         r['building_candidate']={'status':'BLOCKED_INVALID_BALANCE',
              'topology_confirmed':False,'measurement_energy_kwh':None,
-             'method':'constant_instantaneous_load_persistence_uncalibrated',
+             'method':'rolling_HA_snapshot_median_persistence_uncalibrated',
              'temperature_response_identified':False,'uncertainty_calibrated':False}
-        if r['balance'].get('status')=='DIAGNOSTIC_ONLY' and candidate is not None and candidate>=0:
+        if r['balance'].get('status')=='DIAGNOSTIC_ONLY' and (building_profile or {}).get('ready') is True and candidate is not None and candidate>=0:
             r['building_candidate'].update(status='CONDITIONAL_ESTIMATE_ONLY',power_w=candidate,
                 assumption='M1 at whole-site grid connection, one represented AC inverter, aligned device snapshots; unconfirmed')
             for d in r['decisions']:
@@ -123,12 +125,13 @@ class Planner:
         try:
             self.c.execute('PRAGMA journal_mode=WAL');self.c.execute('PRAGMA synchronous=FULL')
             self.c.execute('CREATE TABLE IF NOT EXISTS runs(id PRIMARY KEY,fingerprint,record)')
+            self.quality=Quality(self.c)
         except Exception:
             self.c.close();raise
     def run(self,states,prediction,at,config,options):
         sizes=sum(p.stat().st_size for p in (self.path,Path(str(self.path)+'-wal'),Path(str(self.path)+'-shm')) if p.exists())
         if sizes>=256*1024*1024 or shutil.disk_usage(self.path.parent).free<64*1024*1024:raise OSError('planning_storage_limit')
-        record=plan(states,prediction,at,config,options)
+        record=plan(states,prediction,at,config,options,self.quality.summary(at))
         digest=hashlib.sha256(json.dumps(dict(planning=config,observation=options['observation'],legacy_sources=options['sources']),sort_keys=True).encode()).hexdigest()
         record['planning_config_fingerprint']=digest
         self.c.execute('BEGIN IMMEDIATE')
