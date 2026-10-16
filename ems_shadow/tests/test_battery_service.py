@@ -63,5 +63,5 @@ class DeadlineTests(unittest.TestCase):
   import time
   ha=SupervisorHA('synthetic');ha.deadline=time.monotonic()-1
   with patch('urllib.request.urlopen') as network:
-   with self.assertRaises(RuntimeError):ha.state('sensor.example')
+   with self.assertRaises(RuntimeError):ha.state('sensor.example_probe')
    network.assert_not_called()
