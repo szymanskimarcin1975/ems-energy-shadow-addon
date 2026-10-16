@@ -16,6 +16,14 @@ def fixture(now=T):
 class Tests(unittest.TestCase):
  def test_hypothetical_only_actual_solver(self):
   r=plan(*fixture());self.assertEqual(r['status'],'HYPOTHETICAL_SCHEDULE_READY');self.assertEqual(len(r['decisions']),4);self.assertFalse(r['control_enabled']);self.assertEqual(len(r['decisions'][0]['schedule']),24);self.assertIsNone(r['flows']['actual_pv_production_w'])
+ def test_static_ratings_not_falsely_required_to_change(self):
+  a=list(fixture())
+  for e in ('sensor.example_capacity','sensor.example_charge','sensor.example_discharge'):
+   a[0][e]['last_reported']='2026-10-01T00:00:00+00:00'
+  r=plan(*a);self.assertEqual(r['status'],'HYPOTHETICAL_SCHEDULE_READY');self.assertFalse(r['control_enabled'])
+ def test_stale_dynamic_soc_still_rejected(self):
+  a=list(fixture());a[0]['sensor.example_b1_soc']['last_reported']='2026-10-01T00:00:00+00:00'
+  r=plan(*a);self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertIn('sensor.example_b1_soc',r['reason'])
  def test_missing_soc(self):
   a=list(fixture());del a[0]['sensor.example_b1_soc'];r=plan(*a);self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertEqual(r['decisions'],[])
  def test_missing_load(self):
