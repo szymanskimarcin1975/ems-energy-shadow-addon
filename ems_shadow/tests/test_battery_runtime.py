@@ -63,3 +63,15 @@ class Tests(unittest.TestCase):
   class API:
    def call(self,*args):return {'device_found':False,'rows':[]}
   with self.assertRaises(ValueError):bms_snapshot(API(),'sensor.example_soc',datetime.now(timezone.utc))
+
+class PlanningTests(unittest.TestCase):
+ def test_explicit_owner_range_does_not_grant_safety_authority(self):
+  from battery_runtime import planning_policy
+  p=planning_policy({'soc_operating_bounds':{'minimum':0,'maximum':100,'owner_approved':True}})
+  self.assertTrue(p['owner_approved']);self.assertEqual((p['soc_min'],p['soc_max']),(0,100));self.assertFalse(p['bms_safety_confirmed'])
+ def test_no_implicit_default(self):
+  from battery_runtime import planning_policy
+  for p in (None,{}, {'soc_operating_bounds':{'minimum':0,'maximum':100}}):self.assertFalse(planning_policy(p)['owner_approved'])
+ def test_invalid_bounds(self):
+  from battery_runtime import planning_policy
+  for lo,hi in ((False,100),(0,101),(100,0),(0,float('nan'))):self.assertFalse(planning_policy({'soc_operating_bounds':{'minimum':lo,'maximum':hi,'owner_approved':True}})['owner_approved'])

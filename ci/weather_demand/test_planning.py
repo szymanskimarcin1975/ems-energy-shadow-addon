@@ -91,3 +91,21 @@ class Tests(unittest.TestCase):
    with self.assertRaises(sqlite3.Error):s.run(*fixture())
    self.assertEqual(s.c.execute('select count(*) from runs').fetchone()[0],0);s.c.close()
 if __name__=='__main__':unittest.main()
+
+import unittest
+from unittest.mock import patch
+from planning_runtime import plan
+class ApprovalTests(unittest.TestCase):
+ def test_approved_profile_changes_actual_simulation_floor(self):
+  profile={'soc_operating_bounds':{'minimum':0,'maximum':100,'owner_approved':True}}
+  with patch('planning_runtime.load_profile',return_value=profile):r=plan(*fixture())
+  self.assertEqual(r['status'],'HYPOTHETICAL_SCHEDULE_READY')
+  self.assertEqual(r['battery']['simulated_min_soc_percent'],0)
+  self.assertTrue(r['planning_soc_policy']['applied_to_simulation'])
+  self.assertTrue(all(d['scenario_reserve_kwh']==0 for d in r['decisions']))
+  self.assertFalse(r['control_enabled'])
+ def test_missing_profile_keeps_existing_scenario_and_no_authority(self):
+  with patch('planning_runtime.load_profile',return_value=None):r=plan(*fixture())
+  self.assertEqual(r['battery']['simulated_min_soc_percent'],30)
+  self.assertFalse(r['planning_soc_policy']['applied_to_simulation'])
+  self.assertFalse(r['control_enabled'])

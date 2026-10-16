@@ -4,6 +4,7 @@ The boiler-only scope is not the building load. No PV measurement is inferred.
 import hashlib,json,sqlite3,shutil
 from datetime import timedelta
 from pathlib import Path
+from soc_profile import load_profile,planning_policy
 from weather_demand import stamp,number
 from building_balance import inspect
 from balance_quality import Quality
@@ -18,6 +19,7 @@ def value(states,entity,unit,at,age=240):
     return number(s['state'])
 
 def plan(states,prediction,at,config,options,building_profile=None,input_safety=None):
+    approved_planning=planning_policy(load_profile())
     solar=options['observation']['solar_sources']; old=options['sources']
     evidence=config.get('m1_scope_evidence',{})
     if not isinstance(evidence,dict):evidence={}
@@ -34,6 +36,8 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
        'decisions':[],'building_decisions':[],
        'active_control_readiness':{'ready':False,'ownership':'LEGACY_NOT_TOUCHED',
         'blockers':['M1_SCOPE_UNCONFIRMED','DEVICE_TIME_SYNC_UNCONFIRMED','RESERVE_AND_EFFICIENCY_UNVERIFIED','PRICES_NOT_CONTRACT_VERIFIED','FORECAST_UNCALIBRATED','SINGLE_WRITER_HANDOVER_NOT_EXECUTED']}}
+    r['planning_soc_policy']=approved_planning
+    r['planning_soc_policy']['applied_to_simulation']=False
     r['m1_scope']={'confirmed':scope_confirmed,'evidence':evidence if scope_confirmed else None,'meaning':'Whole-building grid exchange; not total load or pure PV'}
     r['balance']['m1_scope_confirmed']=scope_confirmed
     if scope_confirmed:r['active_control_readiness']['blockers'].remove('M1_SCOPE_UNCONFIRMED')
@@ -59,6 +63,10 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
         r['rating_timestamps']={key:{k:states[config[key]].get(k) for k in ('last_reported','last_updated','last_changed')} for key in ('capacity_entity','charge_limit_entity','discharge_limit_entity')}
         if not 0<capacity<=30 or not 0<=soc<=100 or not 0<=charge<=15 or not 0<=discharge<=15:raise ValueError('outside_simulation_limits')
         minimum=number(config['simulation_min_soc_percent'])
+        if approved_planning['owner_approved']:
+            if approved_planning['soc_max']!=100:raise ValueError('unsupported_planning_ceiling')
+            minimum=approved_planning['soc_min']
+            r['planning_soc_policy']['applied_to_simulation']=True
         ce,de=number(config['simulation_charge_eff']),number(config['simulation_discharge_eff'])
         if not 0<=minimum<=100:raise ValueError('invalid_simulation_floor')
         r['battery']={'soc_percent':soc,'capacity_kwh':capacity,'simulated_min_soc_percent':minimum,
@@ -160,7 +168,7 @@ class Planner:
     def run(self,states,prediction,at,config,options):
         self.storage_guard()
         record=plan(states,prediction,at,config,options,self.quality.summary(at),self.safety.summary(at))
-        digest=hashlib.sha256(json.dumps(dict(planning=config,observation=options['observation'],legacy_sources=options['sources']),sort_keys=True).encode()).hexdigest()
+        digest=hashlib.sha256(json.dumps(dict(planning=config,approved_soc_planning=record['planning_soc_policy'],observation=options['observation'],legacy_sources=options['sources']),sort_keys=True).encode()).hexdigest()
         record['planning_config_fingerprint']=digest
         self.c.execute('BEGIN IMMEDIATE')
         try:
@@ -171,3 +179,4 @@ class Planner:
             raise
         record['persisted_runs']=self.c.execute('SELECT COUNT(*) FROM runs').fetchone()[0]
         return record
+

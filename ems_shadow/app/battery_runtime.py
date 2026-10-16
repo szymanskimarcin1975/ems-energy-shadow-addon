@@ -1,8 +1,9 @@
 """Read-only readiness worker. No actuator transport is constructed or invoked.
-SOC thresholds are deliberately unapproved and never default to 0/100.
+Planning approval is distinct from device safety authority.
 """
 import argparse,json,os,re,signal,sys,threading
 from pathlib import Path
+from soc_profile import planning_policy,load_profile
 from datetime import datetime,timezone,timedelta
 from urllib.request import Request,urlopen
 
@@ -73,8 +74,10 @@ def control_interface(states):
     raw=found[0]
     return {'entity_id':raw['entity_id'],'state':raw.get('state','UNKNOWN'),'ha_last_updated':raw.get('last_updated'),'actuator_authority':False,'meaning':'diagnostic discovery only; no automatic mode change'}
 
-def evaluate(states,sources,now,memory=None):
+
+def evaluate(states,sources,now,memory=None,profile=None):
     result={};issues=[]
+    planning=planning_policy(profile)
     interface=control_interface(states)
     for role in ('b1_soc','b1_power','b1_status','ac_power','m1_import','m1_export'):
         entity=sources.get(role);raw=states.get(entity,{})
@@ -97,8 +100,8 @@ def evaluate(states,sources,now,memory=None):
     return {'recorded_at':now.isoformat(),'valid_until':(now+timedelta(seconds=60)).isoformat(),'status_semantics':'snapshot; after valid_until process state is UNKNOWN','component':'battery_executor_readiness',
       'state':'BLOCKED','mode':'READ_ONLY','commands_enabled':False,'commands_sent':0,
       'policy':{'rated_wh':Policy().rated_wh,'max_charge_w':Policy().max_charge_w,'max_discharge_w':Policy().max_discharge_w,'soc_min':None,'soc_max':None,'soc_bounds_approved':False},
-      'blockers':['SOC_BOUNDS_UNAPPROVED','EXTERNAL_OWNERSHIP_FENCE_UNVERIFIED','PHYSICAL_FALLBACK_UNVERIFIED','NO_BATTERY_EXPORT_UNVERIFIED']+([] if interface['state']=='Remote Control' else ['REMOTE_CONTROL_NOT_CONFIRMED']),
-      'control_interface':interface,'input_issues':issues,'inputs':result,'device_measurement_time_confirmed':False,'shared_owner':shared_owner(states)}
+      'blockers':[*(['SOC_PLANNING_OWNER_APPROVAL_MISSING'] if not planning['owner_approved'] else []),'BMS_OPERATING_ENVELOPE_UNCONFIRMED','EXTERNAL_OWNERSHIP_FENCE_UNVERIFIED','PHYSICAL_FALLBACK_UNVERIFIED','NO_BATTERY_EXPORT_UNVERIFIED']+([] if interface['state']=='Remote Control' else ['REMOTE_CONTROL_NOT_CONFIRMED']),
+      'planning_policy':planning,'control_interface':interface,'input_issues':issues,'inputs':result,'device_measurement_time_confirmed':False,'shared_owner':shared_owner(states)}
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--options',default='/data/options.json');p.add_argument('--root',default='/data/observation-v1');p.add_argument('--report',default='/ha_config/ems_shadow/battery_executor_report.yaml');p.add_argument('--cycles',type=int);p.add_argument('--interval',type=float,default=20);a=p.parse_args()
@@ -113,7 +116,8 @@ def main():
             states=states_by_id(api.call('GET','/states'))
             try:memory=in_memory_times(api,sources);template_status='AVAILABLE'
             except Exception:memory={};template_status='UNAVAILABLE'
-            report=evaluate(states,sources,datetime.now(timezone.utc),memory)
+            profile=load_profile()
+            report=evaluate(states,sources,datetime.now(timezone.utc),memory,profile)
             report['template_status']=template_status
             try:report['bms']=bms_snapshot(api,sources.get('b1_soc'),datetime.now(timezone.utc))
             except Exception:report['bms']={'quality':'UNCONFIRMED','commands_authorized':False}
