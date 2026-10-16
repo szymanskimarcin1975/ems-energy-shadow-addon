@@ -4,6 +4,7 @@ from datetime import datetime,timedelta,timezone
 from pathlib import Path
 from test_planning import fixture
 from demand_runtime import Store
+from planning_runtime import Planner
 class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_GET(self):
@@ -33,6 +34,11 @@ with tempfile.TemporaryDirectory() as td:
   states={'sensor.example_temperature':dict(entity_id='sensor.example_temperature',state='8',attributes={'unit_of_measurement':'°C'},last_reported=t),'sensor.example_energy':dict(state=str(100+i/180),attributes={'unit_of_measurement':'kWh'},last_reported=t),'binary_sensor.example_workday':dict(state='on')}
   store.capture(t,states,sc)
  store.c.close()
+ planner=Planner(root/'planning-v1.sqlite')
+ for i in range(7):
+  states,_,at,_,_=fixture(now-timedelta(seconds=720-i*120))
+  planner.quality.observe(states,at,o)
+ planner.c.close()
  code="import demand_runtime as d,sys; R=d.ReadAPI;d.ReadAPI=lambda token:R(token,base="+repr('http://127.0.0.1:'+str(server.server_port))+");sys.argv=['d','--options',"+repr(str(options))+",'--root',"+repr(str(root))+",'--planning-config',"+repr(str(config))+",'--stop-after-cycles','1'];raise SystemExit(d.main())"
  child=subprocess.Popen([sys.executable,'-c',code]);assert child.wait(timeout=25)==0
  r=json.loads(Path('/ha_config/ems_shadow/planning_report.yaml').read_text())
