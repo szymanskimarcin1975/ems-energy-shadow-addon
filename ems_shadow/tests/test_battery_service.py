@@ -8,6 +8,13 @@ PROFILE={'soc_operating_bounds':{'minimum':0,'maximum':100,'owner_approved':True
 class Local:
  def state(self):return {'owner':'EMS2','epoch':2}
 class TestHA(HA):
+ def current_states(self,entities):
+  rows=super().current_states(entities)
+  for role,e,unit,value in [('m1','sensor.example_m1','kW','-1'),('b1','sensor.example_b1','W','0'),('soc','sensor.example_soc','%',str(self.soc))]:
+   if e in rows:
+    rows[e].update(state=value,attributes={'unit_of_measurement':unit},last_reported=(datetime.now(timezone.utc)-timedelta(seconds=getattr(self,'telemetry_age',1))).isoformat())
+  if getattr(self,'telemetry_fail',False):raise TimeoutError('synthetic')
+  return rows
  def state(self,e):
   if e=='number.example_timeout':return {'state':'3600'}
   if e=='select.example_default':return {'state':'Maximize Self Consumption'}
@@ -17,7 +24,7 @@ class TestHA(HA):
   return super().state(e)
 def config(mode='ACTIVE'):
  now=datetime.now(timezone.utc);device={'model':'example-inverter','firmware':'example-firmware'}
- return {'mode':mode,'device':device,'verified_evidence':{k:dict(verified=True,device=device,reference='synthetic-offline-evidence',verified_at=(now-timedelta(seconds=10)).isoformat(),valid_until=(now+timedelta(seconds=60)).isoformat()) for k in PROOFS},'safety_soc_bounds':{'minimum':0,'maximum':100},'owner_entity':'input_select.example_owner','authorization_entity':'input_boolean.example_auth','expected_epoch':2,'old_writers':['automation.old'],'sources':{'soc':'sensor.example_soc','command_mode':'select.mode','control_mode':'select.example_control','charge_limit':'number.charge','discharge_limit':'number.discharge','device_model':'sensor.example_model','device_firmware':'sensor.example_firmware','timeout':'number.example_timeout','default_mode':'select.example_default'},'bms_sources':{k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')},'pending_request':{'request_id':'example_request','option':'Charge from Solar Power','expires_at':(now+timedelta(seconds=45)).isoformat()}}
+ return {'telemetry_sources':{'m1_power':'sensor.example_m1','b1_power':'sensor.example_b1','soc':'sensor.example_soc'},'mode':mode,'device':device,'verified_evidence':{k:dict(verified=True,device=device,reference='synthetic-offline-evidence',verified_at=(now-timedelta(seconds=10)).isoformat(),valid_until=(now+timedelta(seconds=60)).isoformat()) for k in PROOFS},'safety_soc_bounds':{'minimum':0,'maximum':100},'owner_entity':'input_select.example_owner','authorization_entity':'input_boolean.example_auth','expected_epoch':2,'old_writers':['automation.old'],'sources':{'soc':'sensor.example_soc','command_mode':'select.mode','control_mode':'select.example_control','charge_limit':'number.charge','discharge_limit':'number.discharge','device_model':'sensor.example_model','device_firmware':'sensor.example_firmware','timeout':'number.example_timeout','default_mode':'select.example_default'},'bms_sources':{k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')},'pending_request':{'request_id':'example_request','option':'Charge from Solar Power','expires_at':(now+timedelta(seconds=45)).isoformat()}}
 class Tests(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.ha=TestHA();self.s=BatteryService(self.tmp.name,Local(),'synthetic',ha=self.ha);self.addCleanup(self.s.close)
@@ -39,6 +46,28 @@ class Tests(unittest.TestCase):
   self.ha.auth='unavailable';self.assertEqual(self.s.cycle(config(),PROFILE)['effective_state'],'OWNERSHIP_UNCONFIRMED');self.assertEqual(self.ha.calls,[])
  def test_zero_peak_charge_blocks(self):
   self.ha.peak_charge=0;r=self.s.cycle(config(),PROFILE);self.assertEqual(r['effective_state'],'BMS_DIRECTION_LIMIT_ZERO');self.assertEqual(self.ha.calls,[])
+ def test_stale_telemetry_blocks_service_before_intent(self):
+  self.ha.telemetry_age=181;r=self.s.cycle(config(),PROFILE)
+  self.assertEqual(r['effective_state'],'BLOCKED_SAFETY');self.assertIn('HA_TELEMETRY_STALE_OR_FUTURE',r['safety_reasons']);self.assertEqual(self.ha.calls,[])
+ def test_telemetry_connection_failure_fails_closed(self):
+  self.ha.telemetry_fail=True;r=self.s.cycle(config(),PROFILE)
+  self.assertIn('TELEMETRY_READ_UNCONFIRMED',r['safety_reasons']);self.assertEqual(self.ha.calls,[])
+ def test_missing_source_mapping_blocks_not_implicit_defaults(self):
+  c=config();del c['telemetry_sources'];r=self.s.cycle(c,PROFILE)
+  self.assertIn('TELEMETRY_SOURCES_UNCONFIRMED',r['safety_reasons']);self.assertEqual(self.ha.calls,[])
+ def test_readonly_reports_quality_without_actuation(self):
+  self.ha.telemetry_age=181;r=self.s.cycle(config('READ_ONLY'),PROFILE)
+  self.assertEqual(r['effective_state'],'READ_ONLY');self.assertEqual(r['telemetry_quality'],'HA_TELEMETRY_STALE_OR_FUTURE');self.assertEqual(self.ha.calls,[])
+ def test_final_executor_check_rejects_changed_telemetry(self):
+  original=self.ha.current_states;counter=[0]
+  def changing(entities):
+   if 'sensor.example_m1' in entities:
+    counter[0]+=1
+    if counter[0]>=3:self.ha.telemetry_age=181
+   return original(entities)
+  self.ha.current_states=changing
+  r=self.s.cycle(config(),PROFILE)
+  self.assertEqual(r['effective_state'],'HA_TELEMETRY_STALE_OR_FUTURE');self.assertEqual(self.ha.calls,[])
  def test_unknown_result_no_retry_after_restart(self):
   c=config();self.ha.fail=True;self.assertEqual(self.s.cycle(c,PROFILE)['effective_state'],'UNKNOWN');self.s.close()
   self.s=BatteryService(self.tmp.name,Local(),'synthetic',ha=self.ha);self.ha.fail=False;c['pending_request']['request_id']='after_restart'
@@ -65,3 +94,4 @@ class DeadlineTests(unittest.TestCase):
   with patch('urllib.request.urlopen') as network:
    with self.assertRaises(RuntimeError):ha.state('sensor.example_probe')
    network.assert_not_called()
+

@@ -73,13 +73,14 @@ class Executor:
     Local flock is only process exclusivity, NOT a fence against HA automations.
     """
     ALLOWED={'Charge from Solar Power','Discharge to Minimize Import'}
-    def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None,clock=None,control_entity=None,bms_sources=None):
+    def __init__(self,ha,policy,db,lock,*,old_writers,soc_entity,mode_entity,power_entities,owner_entity=None,ownership=None,expected_epoch=None,clock=None,control_entity=None,bms_sources=None,telemetry_check=None):
         self.ha=ha;self.p=policy;self.db=db;self.lock=lock
         self.old=tuple(old_writers);self.soc=soc_entity;self.mode=mode_entity
         self.powers=tuple(power_entities);self.owner_entity=owner_entity;self.ownership=ownership;self.expected_epoch=expected_epoch
         self.clock=clock or (lambda: datetime.now(timezone.utc))
         self.control_entity=control_entity
         self.bms=dict(bms_sources or {})
+        self.telemetry_check=telemetry_check
     def preflight(self):
         p=self.p
         if p.enabled is not True:return 'DISABLED'
@@ -123,6 +124,10 @@ class Executor:
         return None
 
     def live_guard(self,option,now):
+        try:
+            quality=self.telemetry_check() if self.telemetry_check else 'TELEMETRY_CHECK_MISSING'
+            if quality!='HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF':return quality
+        except Exception:return 'TELEMETRY_READ_UNCONFIRMED'
         if self.local_owner_guard():return 'OWNERSHIP_UNCONFIRMED'
         if self.ha.state(self.owner_entity).get('state')!='EMS2':return 'SHARED_OWNER_NOT_EMS2'
         if self.ha.state(self.control_entity).get('state')!='Remote Control':return 'REMOTE_CONTROL_NOT_ACTIVE'
@@ -185,3 +190,4 @@ class Executor:
                 except Exception:status='UNKNOWN'
                 db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id));db.commit()
                 return status
+

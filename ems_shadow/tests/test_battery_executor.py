@@ -28,7 +28,7 @@ class Tests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.ha=HA()
   self.p=Policy(enabled=True,soc_min=30,soc_max=90,soc_bounds_approved=True,handover_verified=True,no_export_verified=True,fallback_verified=True)
  def executor(self,p=None):
-  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2,control_entity='select.example_control',bms_sources={k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')})
+  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2,control_entity='select.example_control',telemetry_check=lambda:'HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF',bms_sources={k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')})
  def run_command(self,x,id='r',mode='Charge from Solar Power'):
   return x.execute(id,mode,datetime.now(timezone.utc)+timedelta(seconds=30))
  def test_disabled_no_files_no_api(self):
@@ -138,3 +138,4 @@ class Tests(unittest.TestCase):
   self.ha.bms_age=1000;self.assertEqual(self.run_command(self.executor()),'BMS_HA_UPDATE_UNCONFIRMED')
  def test_nan_bms_blocks(self):
   self.ha.peak_charge=float('nan');self.assertEqual(self.run_command(self.executor()),'BMS_LIMIT_INVALID')
+
