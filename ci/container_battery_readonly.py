@@ -10,6 +10,8 @@ def run(*a):
  return result.stdout
 with tempfile.TemporaryDirectory() as tmp:
  root=Path(tmp);data=root/'data';ha=root/'ha';data.mkdir();ha.mkdir()
+ (ha/'ems_shadow').mkdir()
+ (ha/'ems_shadow/battery_executor_config.yaml').write_text(json.dumps({'mode':'READ_ONLY','telemetry_sources':{'m1_power':'sensor.example_m1_power','b1_power':'sensor.example_b1_power','soc':'sensor.example_b1_soc'}}))
  options=json.loads(Path('ems_shadow/tests/example_options.json').read_text())
  options.setdefault('observation',{})['enabled']=True
  options['observation']['solar_sources']={role:'sensor.example_'+({'ac_power':'ac_power','m1_import':'m1_import','m1_export':'m1_export'}.get(role,role)) for role in ('b1_soc','b1_power','b1_status','ac_power','m1_import','m1_export')}
@@ -37,6 +39,7 @@ with tempfile.TemporaryDirectory() as tmp:
   assert report['execution_service']['executor_initialized'] is True
   assert report['execution_service']['requested_mode']=='READ_ONLY'
   assert report['execution_service']['effective_state']=='READ_ONLY'
+  assert report['execution_service']['telemetry_quality']=='HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF'
   assert report['execution_service']['cycles']==2
   with sqlite3.connect(data/'observation-v1/battery-execution.sqlite') as execution:
    assert execution.execute('pragma integrity_check').fetchone()[0]=='ok'
