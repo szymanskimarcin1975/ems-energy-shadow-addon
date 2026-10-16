@@ -59,6 +59,17 @@ class Tests(unittest.TestCase):
   for when in ('bad','2027-01-01T00:00:00+00:00'):
    a=list(fixture());a[3]['m1_scope_evidence']={'scope':'whole_building_grid_exchange','confirmed_by':'installation_owner','confirmed_at':when}
    r=plan(*a);self.assertFalse(r['m1_scope']['confirmed']);self.assertIn('M1_SCOPE_UNCONFIRMED',r['active_control_readiness']['blockers'])
+ def test_live_soc_below_scenario_floor_keeps_advisory_running(self):
+  a=list(fixture());a[0]['sensor.example_b1_soc']['state']='20'
+  r=plan(*a,building_profile={'ready':True,'power_w':300})
+  self.assertEqual(r['status'],'HYPOTHETICAL_SCHEDULE_READY')
+  self.assertEqual(len(r['building_decisions']),4);self.assertFalse(r['control_enabled'])
+  self.assertEqual(r['battery']['soc_percent'],20)
+  for d in r['building_decisions']:
+   previous=d['initial_stored_kwh']
+   for row in d['schedule']:
+    self.assertGreaterEqual(row['stored_kwh']+1e-9,min(previous,d['scenario_reserve_kwh']))
+    previous=row['stored_kwh']
  def test_missing_soc(self):
   a=list(fixture());del a[0]['sensor.example_b1_soc'];r=plan(*a);self.assertEqual(r['status'],'BLOCKED_INPUT');self.assertEqual(r['decisions'],[])
  def test_missing_load(self):
