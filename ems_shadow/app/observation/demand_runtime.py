@@ -166,11 +166,17 @@ def main():
                     if planning_path.exists():
                         if planning_path.stat().st_size>65536:raise ValueError('planning_config_too_large')
                         planning_config=json.loads(planning_path.read_text())
-                        if planning_config.get('enabled') is True and time.monotonic()>=next_planning:
+                        if planning_config.get('enabled') is True:
                             if planner is None:planner=Planner(root/'planning-v1.sqlite')
-                            result=planner.run(states,prediction,at,planning_config,json.loads(Path(args.options).read_text()))
-                            atomic('/ha_config/ems_shadow/planning_report.yaml',result)
-                            next_planning=time.monotonic()+300
+                            planner.quality.observe(states,at,json.loads(Path(args.options).read_text()))
+                            if time.monotonic()>=next_planning:
+                                result=planner.run(states,prediction,at,planning_config,json.loads(Path(args.options).read_text()))
+                                atomic('/ha_config/ems_shadow/planning_report.yaml',result)
+                                next_planning=time.monotonic()+300
+                                planner.last_report=result
+                            elif getattr(planner,'last_report',None):
+                                result=dict(planner.last_report,balance_quality=planner.quality.summary(at),quality_updated_at=at)
+                                atomic('/ha_config/ems_shadow/planning_report.yaml',result)
                 except (OSError,ValueError,KeyError,TypeError,sqlite3.Error):
                     try:
                         atomic('/ha_config/ems_shadow/planning_report.yaml',{'generated_at':at,'valid_until':(stamp(at)+timedelta(seconds=45)).isoformat(),'status':'PLANNING_ERROR','control_enabled':False})
