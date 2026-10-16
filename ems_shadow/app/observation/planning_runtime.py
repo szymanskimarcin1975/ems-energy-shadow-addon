@@ -131,6 +131,13 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
     r['current_plan_usable_for_simulation']=(r['status']=='HYPOTHETICAL_SCHEDULE_READY' and input_safety is not None and input_safety.get('current_ha_set_valid') is True)
     return r
 
+def refresh_plan_report(planner,at):
+    result=dict(planner.last_report,balance_quality=planner.quality.summary(at),input_safety=planner.safety.summary(at),quality_updated_at=at)
+    usable=(result['input_safety']['current_ha_set_valid'] and stamp(at)<=stamp(result['valid_until']) and result.get('status')=='HYPOTHETICAL_SCHEDULE_READY')
+    result['current_plan_usable_for_simulation']=usable
+    if not usable:result.update(status='SUSPENDED_INPUT_QUALITY_OR_EXPIRED',decisions=[],building_decisions=[])
+    return result
+
 class Planner:
     def __init__(self,path):
         self.path=Path(path)
