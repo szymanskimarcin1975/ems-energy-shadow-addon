@@ -11,6 +11,9 @@ import urllib.request
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
+class GatewayRejected(RuntimeError):
+    pass
+
 class SupervisorHA:
     """Real HA transport; token is injected at runtime, never persisted."""
     def __init__(self, token, base='http://supervisor/core/api'):
@@ -26,8 +29,16 @@ class SupervisorHA:
     def state(self,entity):
         if not re.fullmatch(r'[a-z_]+\.[a-z0-9_]+',entity): raise ValueError('entity')
         return self._request('/states/'+entity)
-    def select(self,entity,option):
-        return self._request('/services/select/select_option',{'entity_id':entity,'option':option})
+    def select(self,entity,option,*,request_id=None,expires_at=None):
+        # Both controllers use the HA queued script. There is no direct device
+        # service path in this transport. The production gateway denies EMS2.
+        if not request_id or expires_at is None:raise GatewayRejected('gateway_request_missing')
+        result=self._request('/services/script/ems_battery_command_gateway?return_response',
+          {'caller':'EMS2','operation':'command_mode','command_value':option,
+           'request_id':request_id,'expires_at':expires_at.timestamp()})
+        reply=result.get('service_response',{}) if isinstance(result,dict) else {}
+        if reply.get('status')!='SERVICE_COMPLETED':raise GatewayRejected('gateway_rejected')
+        return reply
 
 @dataclass(frozen=True)
 class Policy:
@@ -122,11 +133,12 @@ class Executor:
                     issued_at=self.clock()
                     if not issued_at<expires_at:
                         db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));db.commit();return 'EXPIRED_REQUEST'
-                    self.ha.select(self.mode,option)
+                    self.ha.select(self.mode,option,request_id=request_id,expires_at=expires_at)
                     s=self.ha.state(self.mode)
                     stamp=datetime.fromisoformat(s['last_updated'])
                     ack=s['state']==option and stamp.tzinfo is not None and issued_at<=stamp<=self.clock()
                     status='ACK' if ack else 'UNKNOWN'
+                except GatewayRejected:status='REJECTED'
                 except Exception:status='UNKNOWN'
                 db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id));db.commit()
                 return status

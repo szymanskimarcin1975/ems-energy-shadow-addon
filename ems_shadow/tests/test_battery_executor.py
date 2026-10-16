@@ -12,7 +12,7 @@ class HA:
   if e=='sensor.example_soc':return {'state':str(self.soc),'last_reported':(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()}
   if e.startswith('number.'):return {'state':'5000'}
   return {'state':'Charge from Solar Power','last_updated':datetime.now(timezone.utc).isoformat() if self.ack else '2000-01-01T00:00:00+00:00'}
- def select(self,e,o):
+ def select(self,e,o,**kwargs):
   self.calls.append((e,o))
   if self.fail:raise TimeoutError()
 class Owner:
@@ -93,3 +93,24 @@ class Tests(unittest.TestCase):
   original=self.ha.state
   self.ha.state=lambda e:{'state':'unavailable'} if e=='select.mode' else original(e)
   self.assertEqual(self.run_command(self.executor()),'COMMAND_INTERFACE_UNAVAILABLE');self.assertEqual(self.ha.calls,[])
+
+ def test_real_transport_uses_shared_queue_not_direct_select(self):
+  from battery_executor import SupervisorHA
+  from unittest.mock import patch
+  ha=SupervisorHA('synthetic');deadline=datetime.now(timezone.utc)+timedelta(seconds=30)
+  with patch.object(ha,'_request',return_value={'service_response':{'status':'SERVICE_COMPLETED'}}) as request:
+   ha.select('select.mode','Charge from Solar Power',request_id='queue1',expires_at=deadline)
+  path,data=request.call_args.args
+  self.assertEqual(path,'/services/script/ems_battery_command_gateway?return_response')
+  self.assertEqual(data['caller'],'EMS2');self.assertEqual(data['request_id'],'queue1')
+ def test_gateway_rejection_is_not_device_ack(self):
+  from battery_executor import SupervisorHA,GatewayRejected
+  from unittest.mock import patch
+  with patch.object(SupervisorHA,'_request',return_value={'service_response':{'status':'REJECTED'}}):
+   with self.assertRaises(GatewayRejected):SupervisorHA('synthetic').select('select.mode','Charge from Solar Power',request_id='no',expires_at=datetime.now(timezone.utc))
+ def test_executor_known_gateway_rejection_persists_rejected(self):
+  from battery_executor import GatewayRejected
+  def reject(*args,**kwargs):raise GatewayRejected('gateway_rejected')
+  self.ha.select=reject
+  self.assertEqual(self.run_command(self.executor()),'REJECTED')
+  with sqlite3.connect(Path(self.tmp.name)/'c.sqlite') as db:self.assertEqual(db.execute('select status from commands').fetchone()[0],'REJECTED')
