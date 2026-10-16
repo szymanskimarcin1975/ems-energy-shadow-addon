@@ -128,6 +128,7 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
         r['pv_forecast_issued_at']=issued.isoformat()
     except (KeyError,TypeError,ValueError,OverflowError) as exc:
         r['status']='BLOCKED_INPUT';r['reason']=type(exc).__name__+':'+str(exc)[:100];r['decisions']=[];r['building_decisions']=[]
+    r['current_plan_usable_for_simulation']=(r['status']=='HYPOTHETICAL_SCHEDULE_READY' and input_safety is not None and input_safety.get('current_ha_set_valid') is True)
     return r
 
 class Planner:
