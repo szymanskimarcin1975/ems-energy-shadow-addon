@@ -6,6 +6,7 @@ from battery_executor import Executor,Policy
 class HA:
  def __init__(self):self.calls=[];self.old='off';self.soc=50;self.fail=False;self.ack=True
  def state(self,e):
+  if e=='input_select.example_owner':return {'state':getattr(self,'owner','EMS2')}
   if e=='automation.old':return {'state':self.old,'attributes':{'current':0}}
   if e=='sensor.example_soc':return {'state':str(self.soc),'last_reported':(datetime.now(timezone.utc)-timedelta(seconds=1)).isoformat()}
   if e.startswith('number.'):return {'state':'5000'}
@@ -13,12 +14,14 @@ class HA:
  def select(self,e,o):
   self.calls.append((e,o))
   if self.fail:raise TimeoutError()
+class Owner:
+ def state(self):return {'owner':'EMS2','epoch':2,'commands_permitted':True,'external_fence_verified':True}
 class Tests(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.ha=HA()
   self.p=Policy(enabled=True,soc_min=30,soc_max=90,soc_bounds_approved=True,handover_verified=True,no_export_verified=True,fallback_verified=True)
  def executor(self,p=None):
-  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'])
+  return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2)
  def run_command(self,x,id='r',mode='Charge from Solar Power'):
   return x.execute(id,mode,datetime.now(timezone.utc)+timedelta(seconds=30))
  def test_disabled_no_files_no_api(self):
@@ -59,3 +62,12 @@ class Tests(unittest.TestCase):
   x=self.executor();x.db=Path(self.tmp.name)/'missing'/'db.sqlite'
   with self.assertRaises(sqlite3.OperationalError):self.run_command(x)
   self.assertEqual(self.ha.calls,[])
+
+ def test_shared_legacy_blocks_even_if_local_owner_approved(self):
+  self.ha.owner='LEGACY';self.assertEqual(self.run_command(self.executor()),'SHARED_OWNER_NOT_EMS2');self.assertEqual(self.ha.calls,[])
+ def test_shared_unknown_blocks(self):
+  self.ha.owner='UNKNOWN';self.assertEqual(self.run_command(self.executor()),'SHARED_OWNER_NOT_EMS2');self.assertEqual(self.ha.calls,[])
+ def test_missing_local_owner_blocks(self):
+  x=self.executor();x.ownership=None;self.assertEqual(self.run_command(x),'OWNERSHIP_UNCONFIRMED');self.assertEqual(self.ha.calls,[])
+ def test_owner_epoch_change_blocks(self):
+  x=self.executor();x.expected_epoch=3;self.assertEqual(self.run_command(x),'OWNERSHIP_UNCONFIRMED');self.assertEqual(self.ha.calls,[])

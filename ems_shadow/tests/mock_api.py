@@ -16,6 +16,7 @@ class Handler(BaseHTTPRequestHandler):
         extra={'sensor.example_b1_soc':'50','sensor.example_b1_power':'500','sensor.example_b1_status':'B_STATUS_CHARGE','sensor.example_ac_power':'1000','sensor.example_m1_import':'100','sensor.example_m1_export':'20'}
         old=(datetime.now(timezone.utc)-timedelta(hours=1)).isoformat()
         rows += [dict(entity_id=id,state=value,last_reported=old if id=='sensor.example_b1_status' else stamp,last_updated=old if id=='sensor.example_b1_status' else stamp,last_changed=old if id=='sensor.example_b1_status' else stamp,attributes={}) for id,value in extra.items()]
+        rows.append(dict(entity_id='input_select.example_owner',state='LEGACY',last_reported=stamp,last_updated=stamp,last_changed=stamp,attributes={'friendly_name':'EMS Battery Control Owner','options':['UNKNOWN','LEGACY','EMS2']}))
         body=json.dumps(rows).encode()
         self.send_response(200); self.send_header('Content-Type','application/json')
         self.end_headers(); self.wfile.write(body)

@@ -33,3 +33,10 @@ class Tests(unittest.TestCase):
   self.assertIn('b1_status:UNAVAILABLE',r['input_issues'])
  def test_report_expiry_is_explicit(self):
   r=self.report();self.assertEqual((datetime.fromisoformat(r['valid_until'])-datetime.fromisoformat(r['recorded_at'])).total_seconds(),60)
+
+ def test_shared_owner_requires_unique_exact_contract(self):
+  from battery_runtime import shared_owner
+  x={'entity_id':'input_select.example_owner','state':'LEGACY','attributes':{'friendly_name':'EMS Battery Control Owner','options':['UNKNOWN','LEGACY','EMS2']}}
+  self.assertEqual(shared_owner({'a':x})['state'],'LEGACY')
+  self.assertEqual(shared_owner({'a':x,'b':dict(x,entity_id='input_select.example_other')})['state'],'UNKNOWN')
+  self.assertEqual(shared_owner({})['state'],'UNKNOWN')

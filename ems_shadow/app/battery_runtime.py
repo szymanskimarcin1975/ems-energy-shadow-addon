@@ -36,6 +36,12 @@ def in_memory_times(api,sources):
     if isinstance(rows,str):rows=json.loads(rows)
     return states_by_id(rows)
 
+def shared_owner(states):
+    found=[s for s in states.values() if s.get('entity_id','').startswith('input_select.') and s.get('attributes',{}).get('friendly_name')=='EMS Battery Control Owner' and s.get('attributes',{}).get('options')==['UNKNOWN','LEGACY','EMS2']]
+    if len(found)!=1:return {'entity_id':None,'state':'UNKNOWN','reason':'missing_or_ambiguous_shared_owner'}
+    state=found[0].get('state')
+    return {'entity_id':found[0]['entity_id'],'state':state if state in ('UNKNOWN','LEGACY','EMS2') else 'UNKNOWN','source':'HA_REST_CURRENT_STATE_NOT_TELEMETRY_CLOCK'}
+
 def evaluate(states,sources,now,memory=None):
     result={};issues=[]
     for role in ('b1_soc','b1_power','b1_status','ac_power','m1_import','m1_export'):
@@ -60,7 +66,7 @@ def evaluate(states,sources,now,memory=None):
       'state':'BLOCKED','mode':'READ_ONLY','commands_enabled':False,'commands_sent':0,
       'policy':{'rated_wh':Policy().rated_wh,'max_charge_w':Policy().max_charge_w,'max_discharge_w':Policy().max_discharge_w,'soc_min':None,'soc_max':None,'soc_bounds_approved':False},
       'blockers':['SOC_BOUNDS_UNAPPROVED','EXTERNAL_OWNERSHIP_FENCE_UNVERIFIED','PHYSICAL_FALLBACK_UNVERIFIED','NO_BATTERY_EXPORT_UNVERIFIED'],
-      'input_issues':issues,'inputs':result,'device_measurement_time_confirmed':False}
+      'input_issues':issues,'inputs':result,'device_measurement_time_confirmed':False,'shared_owner':shared_owner(states)}
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--options',default='/data/options.json');p.add_argument('--root',default='/data/observation-v1');p.add_argument('--report',default='/ha_config/ems_shadow/battery_executor_report.yaml');p.add_argument('--cycles',type=int);p.add_argument('--interval',type=float,default=20);a=p.parse_args()
@@ -78,6 +84,8 @@ def main():
             report=evaluate(states,sources,datetime.now(timezone.utc),memory)
             report['template_status']=template_status
             report['ownership']=ownership.state()
+            report['owner_states_consistent']=report['shared_owner']['state']==report['ownership']['owner']
+            if not report['owner_states_consistent']:report['blockers'].append('OWNERSHIP_MISMATCH_NO_AUTOMATIC_RECONCILIATION')
         except Exception:
             report={'recorded_at':datetime.now(timezone.utc).isoformat(),'component':'battery_executor_readiness','state':'UNKNOWN','mode':'READ_ONLY','commands_enabled':False,'commands_sent':0,'reason':'read_failed'}
         seq+=1
