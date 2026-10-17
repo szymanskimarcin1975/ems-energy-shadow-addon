@@ -150,6 +150,8 @@ def main():
                 report.get('shared_owner',{}).get('state','UNKNOWN'),
                 states.get('input_boolean.ems_battery_execution_authorized',{}).get('state')=='on',
                 read_config().get('expected_epoch',-1))
+            if report['epoch_coherence'].get('status') != 'COHERENT_ADVISORY_ONLY':
+                report['blockers'].append('DURABLE_EPOCH_COHERENCE_UNCONFIRMED')
             report['owner_states_consistent']=report['shared_owner']['state']==report['ownership']['owner']
             if not report['owner_states_consistent']:report['blockers'].append('OWNERSHIP_MISMATCH_NO_AUTOMATIC_RECONCILIATION')
         except Exception:
