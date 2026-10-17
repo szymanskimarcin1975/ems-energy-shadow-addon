@@ -8,6 +8,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from shadow import Shadow, capture
+from zigbee_freshness import classify as classify_freshness
 from settings import load_sources, load_ledger_id, fingerprint, ConfigurationError
 
 def atomic_report(path, report):
@@ -49,7 +50,10 @@ def make_report(sh, running=True):
         previous=c.execute("SELECT value FROM state WHERE key='previous'").fetchone()
         previous_sample=json.loads(previous[0])['sample'] if previous else {}
         diagnostics=previous_sample.get('source_diagnostics',{})
-        meter_freshness=previous_sample.get('meter_freshness',{'status':'UNKNOWN','advisory_only':True})
+        meter_freshness=classify_freshness(datetime.now(timezone.utc).isoformat(),{
+            k:{'state':previous_sample.get(k),'last_reported':previous_sample.get(k+'_time')}
+            for k in ('boiler_w','heatpump_w')
+        })
         r.update(schema_version=1, generated_at=datetime.now(timezone.utc).isoformat(),
                  running=running, first_sample=first, last_sample=last,
                  last_valid_sample=good, observation_seconds=elapsed,
