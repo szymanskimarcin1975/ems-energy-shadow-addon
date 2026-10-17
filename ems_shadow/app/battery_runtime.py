@@ -32,6 +32,7 @@ from battery_service import BatteryService,read_config
 from ownership import Ownership
 from epoch_coherence import inspect as inspect_epoch_coherence
 from b1_monitor import Monitor as B1Monitor
+from b1_dc_energy_estimator import EnergyEstimator
 
 MEMORY_TEMPLATE = """{% set ns=namespace(rows=[]) %}{% for id in ids %}{% set s=states[id] %}{% if s is not none %}{% set ns.rows=ns.rows+[{'entity_id':id,'state':s.state,'last_reported':s.last_reported.isoformat(),'last_updated':s.last_updated.isoformat(),'last_changed':s.last_changed.isoformat()}] %}{% endif %}{% endfor %}{{ns.rows|to_json}}"""
 def in_memory_times(api,sources):
@@ -114,6 +115,7 @@ def main():
     stop=threading.Event();seq=0;commits=0;root=Path(a.root);root.mkdir(parents=True,exist_ok=True)
     ownership=Ownership(root/'battery-ownership.sqlite',sources)
     service=None
+    b1_dc_estimator=EnergyEstimator()
     try:b1_monitor=B1Monitor(sources.get('b1_power'))
     except ValueError:b1_monitor=None  # Diagnostic optional; worker remains operational
     try:service=BatteryService(root,ownership,os.environ['SUPERVISOR_TOKEN'])
@@ -127,6 +129,13 @@ def main():
             profile=load_profile()
             report=evaluate(states,sources,datetime.now(timezone.utc),memory,profile)
             report['template_status']=template_status
+            # Strictly advisory DC estimator fed by HA in-memory report timestamps.
+            # Do not integrate repeats, unavailable samples, or REST update clocks.
+            try:
+                raw=memory.get(sources.get('b1_power'),{}) if template_status=='AVAILABLE' else {}
+                report['b1_dc_energy_estimate']=b1_dc_estimator.observe(raw['last_reported'],raw['state']) if raw else b1_dc_estimator.invalidate_continuity()
+            except Exception:
+                report['b1_dc_energy_estimate']=b1_dc_estimator.invalidate_continuity()
             try:
                 report['b1_counter_diagnostic']=b1_monitor.observe(memory) if b1_monitor and template_status=='AVAILABLE' else {'status':'HA_REPORT_TIMESTAMPS_UNAVAILABLE','advisory_only':True}
             except Exception:
