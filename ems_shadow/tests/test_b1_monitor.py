@@ -13,6 +13,12 @@ class B1MonitorTests(unittest.TestCase):
         m=Monitor("sensor.example_b1_dc_power")
         for i in (0,2,4): m.observe(states(i))
         self.assertEqual(m.observe(states(6))["status"],"STATIONARY_WITH_ACTIVE_POWER")
+    def test_rest_only_state_without_report_time_rejected(self):
+        m=Monitor("sensor.example_b1_dc_power")
+        rest=states(0)
+        for entity in rest.values():
+            del entity["last_reported"]
+        self.assertEqual(m.observe(rest)["status"],"UNAVAILABLE_OR_INVALID_HA_INPUT")
     def test_dedup(self):
         m=Monitor("sensor.example_b1_dc_power");m.observe(states(0))
         self.assertEqual(m.observe(states(0))["status"],"WAITING_FOR_NEW_HA_REPORT")

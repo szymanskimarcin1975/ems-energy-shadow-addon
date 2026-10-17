@@ -128,7 +128,7 @@ def main():
             report=evaluate(states,sources,datetime.now(timezone.utc),memory,profile)
             report['template_status']=template_status
             try:
-                report['b1_counter_diagnostic']=b1_monitor.observe(states) if b1_monitor else {'status':'SOURCE_UNBOUND','advisory_only':True}
+                report['b1_counter_diagnostic']=b1_monitor.observe(memory) if b1_monitor and template_status=='AVAILABLE' else {'status':'HA_REPORT_TIMESTAMPS_UNAVAILABLE','advisory_only':True}
             except Exception:
                 report['b1_counter_diagnostic']={'status':'DIAGNOSTIC_ERROR','advisory_only':True}
             try:report['bms']=bms_snapshot(api,sources.get('b1_soc'),datetime.now(timezone.utc))
