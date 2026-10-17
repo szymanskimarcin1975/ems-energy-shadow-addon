@@ -114,7 +114,8 @@ def main():
     stop=threading.Event();seq=0;commits=0;root=Path(a.root);root.mkdir(parents=True,exist_ok=True)
     ownership=Ownership(root/'battery-ownership.sqlite',sources)
     service=None
-    b1_monitor=B1Monitor(sources.get('b1_power'))  # Passive diagnostic
+    try:b1_monitor=B1Monitor(sources.get('b1_power'))
+    except ValueError:b1_monitor=None  # Diagnostic optional; worker remains operational
     try:service=BatteryService(root,ownership,os.environ['SUPERVISOR_TOKEN'])
     except Exception:pass
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
@@ -127,7 +128,7 @@ def main():
             report=evaluate(states,sources,datetime.now(timezone.utc),memory,profile)
             report['template_status']=template_status
             try:
-                report['b1_counter_diagnostic']=b1_monitor.observe(states)
+                report['b1_counter_diagnostic']=b1_monitor.observe(states) if b1_monitor else {'status':'SOURCE_UNBOUND','advisory_only':True}
             except Exception:
                 report['b1_counter_diagnostic']={'status':'DIAGNOSTIC_ERROR','advisory_only':True}
             try:report['bms']=bms_snapshot(api,sources.get('b1_soc'),datetime.now(timezone.utc))
