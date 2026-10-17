@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from engine import tariff
+from zigbee_freshness import classify as classify_freshness
 ZONE=ZoneInfo('Europe/Warsaw')
 SOURCE_KEYS=('inverter_w','grid_kw','boiler_w','heatpump_w','boiler_kwh','heatpump_kwh','workday')
 
@@ -164,6 +165,11 @@ def snapshot_from_states(sources,rows,now):
         result['source_diagnostics'][k]={'entity_present':id in states,
             'timestamp_field':selected,'timestamp_valid':stamp is not None,
             'field_types':{f:type(s.get(f)).__name__ for f in ('last_reported','last_updated','last_changed')}}
+    # Advisory source freshness only. No control decisions or extra HA queries.
+    result['meter_freshness']=classify_freshness(now.isoformat(),{
+        k:{'state':result[k],'last_reported':result[k+'_time']}
+        for k in ('boiler_w','heatpump_w')
+    })
     for k,source in [('inverter_time','inverter_w'),('grid_time','grid_kw'),('boiler_time','boiler_w'),('heatpump_time','heatpump_w')]: result[k]=result[source+'_time']
     return result
 
