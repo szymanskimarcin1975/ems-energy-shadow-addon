@@ -56,4 +56,9 @@ class B1MonitorTests(unittest.TestCase):
         m.observe(states(0))
         m.observe(states(6))
         self.assertEqual(m.observe(states(8,exp=12))["status"],"COUNTER_DECREASED")
+    def test_long_stationary_counters_keep_reporting(self):
+        m=Monitor("sensor.example_b1_dc_power")
+        outcomes=[m.observe(states(i))["status"] for i in range(0,30,2)]
+        self.assertGreaterEqual(outcomes.count("STATIONARY_WITH_ACTIVE_POWER"),3)
+        self.assertNotIn("STATIONARY_UNCONFIRMED",outcomes)
 if __name__=="__main__":unittest.main()
