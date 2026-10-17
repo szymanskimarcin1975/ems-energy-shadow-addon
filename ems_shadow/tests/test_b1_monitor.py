@@ -28,4 +28,22 @@ class B1MonitorTests(unittest.TestCase):
     def test_no_actuation_authority(self):
         m=Monitor("sensor.example_b1_dc_power")
         self.assertTrue(m.observe(states(0))["advisory_only"])
+    def test_restart_requires_new_baseline(self):
+        m=Monitor("sensor.example_b1_dc_power")
+        m.observe(states(0))
+        m.observe(states(2))
+        restarted=Monitor("sensor.example_b1_dc_power")
+        self.assertEqual(restarted.observe(states(4))["status"],"BASELINE_CAPTURED")
+        self.assertEqual(restarted.observe(states(6))["status"],"INSUFFICIENT_WINDOW")
+    def test_unchanged_ha_timestamp_does_not_accumulate_power(self):
+        m=Monitor("sensor.example_b1_dc_power")
+        m.observe(states(0))
+        for _ in range(20):
+            self.assertEqual(m.observe(states(0))["status"],"WAITING_FOR_NEW_HA_REPORT")
+        self.assertEqual(len(m.window.get()),1)
+    def test_stale_other_counter_not_considered_same_snapshot(self):
+        m=Monitor("sensor.example_b1_dc_power")
+        sample=states(0)
+        sample["sensor.example_b1_energy_import"]["last_reported"]="2026-10-17T15:56:00+00:00"
+        self.assertEqual(m.observe(sample)["status"],"HA_REPORT_SKEW_OR_MISSING")
 if __name__=="__main__":unittest.main()
