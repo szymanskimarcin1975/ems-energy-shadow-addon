@@ -31,6 +31,7 @@ from battery_executor import Policy
 from battery_service import BatteryService,read_config
 from ownership import Ownership
 from epoch_coherence import inspect as inspect_epoch_coherence
+from b1_monitor import Monitor as B1Monitor
 
 MEMORY_TEMPLATE = """{% set ns=namespace(rows=[]) %}{% for id in ids %}{% set s=states[id] %}{% if s is not none %}{% set ns.rows=ns.rows+[{'entity_id':id,'state':s.state,'last_reported':s.last_reported.isoformat(),'last_updated':s.last_updated.isoformat(),'last_changed':s.last_changed.isoformat()}] %}{% endif %}{% endfor %}{{ns.rows|to_json}}"""
 def in_memory_times(api,sources):
@@ -113,6 +114,7 @@ def main():
     stop=threading.Event();seq=0;commits=0;root=Path(a.root);root.mkdir(parents=True,exist_ok=True)
     ownership=Ownership(root/'battery-ownership.sqlite',sources)
     service=None
+    b1_monitor=B1Monitor()  # Passive in-memory diagnostic; no control authority
     try:service=BatteryService(root,ownership,os.environ['SUPERVISOR_TOKEN'])
     except Exception:pass
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
@@ -124,6 +126,10 @@ def main():
             profile=load_profile()
             report=evaluate(states,sources,datetime.now(timezone.utc),memory,profile)
             report['template_status']=template_status
+            try:
+                report['b1_counter_diagnostic']=b1_monitor.observe(states)
+            except Exception:
+                report['b1_counter_diagnostic']={'status':'DIAGNOSTIC_ERROR','advisory_only':True}
             try:report['bms']=bms_snapshot(api,sources.get('b1_soc'),datetime.now(timezone.utc))
             except Exception:report['bms']={'quality':'UNCONFIRMED','commands_authorized':False}
             if report['bms']['quality']=='UNCONFIRMED':report['blockers'].append('BMS_LIMITS_UNCONFIRMED')
