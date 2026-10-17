@@ -27,6 +27,14 @@ class Monitor:
             if any(not math.isfinite(x) for x in (watts,ci,ce)) or ci<0 or ce<0:
                 return {"status":"INVALID_MEASUREMENT","advisory_only":True}
             sample={"timestamp":timestamp,"import_kwh":ci,"export_kwh":ce}
+            # Missing more than one bounded HA cycle breaks power continuity.
+            if self.window.get():
+                prev=datetime.fromisoformat(self.window.get()[-1]["timestamp"])
+                if (stamps[0]-prev).total_seconds()>180:
+                    self.window=B1Window(max_samples=32,max_span_seconds=1800)
+                    self.baseline=sample
+                    self.window.add(timestamp,watts)
+                    return {"status":"GAP_REBASELINED","advisory_only":True,"samples":1}
             accepted=self.window.add(timestamp,watts)
             if accepted=="DUPLICATE_REPORT":
                 return {"status":"WAITING_FOR_NEW_HA_REPORT","advisory_only":True,
