@@ -48,7 +48,8 @@ class Monitor:
             result=evaluate_with_power_samples(self.baseline,sample,self.window.get())
             result["advisory_only"]=True
             result["samples"]=len(self.window.get())
-            if result["status"] in ("COUNTERS_ADVANCING","COUNTER_DECREASED"):
+            if result["status"] in ("COUNTERS_ADVANCING","COUNTER_DECREASED",
+                                    "STATIONARY_WITH_ACTIVE_POWER","STATIONARY_LOW_POWER"):
                 self.baseline=sample
             return result
         except (KeyError,TypeError,ValueError,OverflowError):
