@@ -16,14 +16,20 @@ class EnergyEstimator:
         self.gaps=0
         self.intervals=0
 
+    def invalidate_continuity(self):
+        """Missing HA read breaks the interval; never bridge missing evidence."""
+        self.previous=None
+        self.gaps+=1
+        return self.report("EVIDENCE_GAP_REBASELINED")
+
     def observe(self, timestamp, power_w):
         try:
             t=datetime.fromisoformat(timestamp)
             if t.tzinfo is None or isinstance(power_w,bool):
-                return self.report("INVALID_SAMPLE")
+                return self.invalidate_continuity()
             w=float(power_w)
             if not math.isfinite(w):
-                return self.report("INVALID_SAMPLE")
+                return self.invalidate_continuity()
             if self.previous is None:
                 self.previous=(t,w)
                 return self.report("BASELINE")
@@ -50,7 +56,7 @@ class EnergyEstimator:
             self.intervals+=1
             return self.report("ESTIMATED_INTERVAL")
         except (TypeError,ValueError,OverflowError):
-            return self.report("INVALID_SAMPLE")
+            return self.invalidate_continuity()
 
     def report(self,status):
         return {"status":status,"charge_dc_kwh_estimated":round(self.charge_dc_kwh,6),
