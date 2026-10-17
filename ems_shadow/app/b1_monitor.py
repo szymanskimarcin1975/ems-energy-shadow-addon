@@ -5,15 +5,17 @@ from b1_sample_window import B1Window
 from b1_counter_diagnostic import evaluate_with_power_samples
 
 class Monitor:
-    def __init__(self):
+    def __init__(self, power_entity):
+        if not isinstance(power_entity,str) or not power_entity.startswith("sensor.") or not power_entity.endswith("_dc_power"):
+            raise ValueError("unsupported_power_binding")
+        base=power_entity[:-len("_dc_power")]
+        self.ids=(power_entity,base+"_energy_import",base+"_energy_export")
         self.window=B1Window(max_samples=32,max_span_seconds=1800)
         self.baseline=None
 
     def observe(self, states):
         """One HA /states snapshot. Never reads network or writes devices."""
-        ids=("sensor.solaredge_i1_b1_dc_power",
-             "sensor.solaredge_i1_b1_energy_import",
-             "sensor.solaredge_i1_b1_energy_export")
+        ids=self.ids
         try:
             power,imp,exp=(states[i] for i in ids)
             stamps=[datetime.fromisoformat(v["last_reported"]) for v in (power,imp,exp)]
