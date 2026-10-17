@@ -114,7 +114,7 @@ def main():
     stop=threading.Event();seq=0;commits=0;root=Path(a.root);root.mkdir(parents=True,exist_ok=True)
     ownership=Ownership(root/'battery-ownership.sqlite',sources)
     service=None
-    b1_monitor=B1Monitor()  # Passive in-memory diagnostic; no control authority
+    b1_monitor=B1Monitor(sources.get('b1_power'))  # Passive diagnostic
     try:service=BatteryService(root,ownership,os.environ['SUPERVISOR_TOKEN'])
     except Exception:pass
     for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
