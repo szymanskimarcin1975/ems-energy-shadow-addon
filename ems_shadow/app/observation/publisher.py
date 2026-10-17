@@ -2,6 +2,7 @@
 import json,sys,time,signal,threading,math,os,tempfile
 from pathlib import Path
 from datetime import datetime,timezone,timedelta
+from meter_freshness_runtime import snapshot as meter_snapshot
 def atomic(path,data):
  p=Path(path)
  if p.parent.is_symlink() or p.is_symlink():raise ValueError('report_symlink_refused')
@@ -44,10 +45,15 @@ def report(root,enabled,now=None):
 def main():
  enabled=len(sys.argv)==2 and sys.argv[1]=='true'
  stop=threading.Event()
+ last_meter_check=0
  for s in (signal.SIGTERM,signal.SIGINT):signal.signal(s,lambda *_:stop.set())
  while not stop.is_set():
   try:
    atomic('/ha_config/ems_shadow/observation_report.yaml',report(Path('/data/observation-v1'),enabled))
   except Exception:print('observation_publication_failed',flush=True)
+  if enabled and time.monotonic()-last_meter_check>=20:
+   try:atomic('/ha_config/ems_shadow/meter_freshness_report.yaml',meter_snapshot())
+   except Exception:print('meter_freshness_publication_failed',flush=True)
+   last_meter_check=time.monotonic()
   stop.wait(2)
 if __name__=='__main__':main()
