@@ -23,6 +23,12 @@ jobs:
         run: python3 ci/privacy_check.py
       - name: Observer regression tests
         run: python3 -m unittest discover -s ems_shadow/tests -v
+      - name: Offline epoch, replay and restart regression (no device transport)
+        env:
+          PYTHONPATH: tests/offline_fencing:ems_shadow/app
+        run: |
+          python3 -m unittest discover -s tests/offline_fencing -p 'test_*.py' -v
+          python3 tests/offline_fencing/test_gate.py
       - name: Advisory planner and approved SOC profile regression
         env:
           PYTHONPATH: ems_shadow/app/observation:ems_shadow/app:ems_shadow/app/staging:ems_shadow/app/diagnostic_export
