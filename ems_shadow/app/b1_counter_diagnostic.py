@@ -45,5 +45,6 @@ def evaluate(previous, current, *, mean_abs_watts=None, min_elapsed_seconds=300,
 def evaluate_with_power_samples(previous, current, power_samples):
     """Combine independent counter and continuous-power evidence, advisory only."""
     from b1_power_window import window_mean_abs_power
-    watts=window_mean_abs_power(power_samples,previous["timestamp"],current["timestamp"])
+    window=[row for row in power_samples if previous["timestamp"]<=row["timestamp"]<=current["timestamp"]]
+    watts=window_mean_abs_power(window,previous["timestamp"],current["timestamp"])
     return evaluate(previous,current,mean_abs_watts=watts)
