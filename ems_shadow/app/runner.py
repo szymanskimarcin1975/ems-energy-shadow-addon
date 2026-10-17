@@ -47,7 +47,9 @@ def make_report(sh, running=True):
         sh.checked_rowid = c.execute('SELECT COALESCE(MAX(rowid),0) FROM samples').fetchone()[0]
         failures = c.execute("SELECT COUNT(*) FROM events WHERE reason='capture_failed'").fetchone()[0]
         previous=c.execute("SELECT value FROM state WHERE key='previous'").fetchone()
-        diagnostics=json.loads(previous[0])['sample'].get('source_diagnostics',{}) if previous else {}
+        previous_sample=json.loads(previous[0])['sample'] if previous else {}
+        diagnostics=previous_sample.get('source_diagnostics',{})
+        meter_freshness=previous_sample.get('meter_freshness',{'status':'UNKNOWN','advisory_only':True})
         r.update(schema_version=1, generated_at=datetime.now(timezone.utc).isoformat(),
                  running=running, first_sample=first, last_sample=last,
                  last_valid_sample=good, observation_seconds=elapsed,
@@ -55,7 +57,7 @@ def make_report(sh, running=True):
                  valid_measurements_percent=100*accepted/(r['samples']+failures) if r['samples']+failures else None,
                  integrated_period_percent=100*r['integrated_seconds']/elapsed if elapsed else None,
                  topology_confirmed=False, cumulative_since_database_creation=True,
-                 source_diagnostics=diagnostics, ledger_id=sh.ledger_id,
+                 source_diagnostics=diagnostics, meter_freshness=meter_freshness, ledger_id=sh.ledger_id,
                  sources_digest=sh.sources_digest, addon_version='0.1.2')
         return r
     finally: c.rollback()
