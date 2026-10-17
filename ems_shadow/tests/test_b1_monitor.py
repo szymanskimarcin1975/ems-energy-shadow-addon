@@ -24,7 +24,7 @@ class B1MonitorTests(unittest.TestCase):
         self.assertEqual(m.observe({})["status"],"UNAVAILABLE_OR_INVALID_HA_INPUT")
     def test_no_power_evidence_with_gap(self):
         m=Monitor("sensor.example_b1_dc_power");m.observe(states(0))
-        self.assertEqual(m.observe(states(6))["status"],"STATIONARY_UNCONFIRMED")
+        self.assertEqual(m.observe(states(6))["status"],"GAP_REBASELINED")
     def test_no_actuation_authority(self):
         m=Monitor("sensor.example_b1_dc_power")
         self.assertTrue(m.observe(states(0))["advisory_only"])
