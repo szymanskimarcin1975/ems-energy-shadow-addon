@@ -133,9 +133,9 @@ def main():
             # Do not integrate repeats, unavailable samples, or REST update clocks.
             try:
                 raw=memory.get(sources.get('b1_power'),{}) if template_status=='AVAILABLE' else {}
-                report['b1_dc_energy_estimate']=b1_dc_estimator.observe(raw['last_reported'],raw['state']) if raw else b1_dc_estimator.report('HA_REPORT_UNAVAILABLE')
+                report['b1_dc_energy_estimate']=b1_dc_estimator.observe(raw['last_reported'],raw['state']) if raw else b1_dc_estimator.invalidate_continuity()
             except Exception:
-                report['b1_dc_energy_estimate']=b1_dc_estimator.report('DIAGNOSTIC_UNAVAILABLE')
+                report['b1_dc_energy_estimate']=b1_dc_estimator.invalidate_continuity()
             try:
                 report['b1_counter_diagnostic']=b1_monitor.observe(memory) if b1_monitor and template_status=='AVAILABLE' else {'status':'HA_REPORT_TIMESTAMPS_UNAVAILABLE','advisory_only':True}
             except Exception:
