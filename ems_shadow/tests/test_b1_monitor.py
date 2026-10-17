@@ -46,4 +46,14 @@ class B1MonitorTests(unittest.TestCase):
         sample=states(0)
         sample["sensor.example_b1_energy_import"]["last_reported"]="2026-10-17T15:56:00+00:00"
         self.assertEqual(m.observe(sample)["status"],"HA_REPORT_SKEW_OR_MISSING")
+    def test_gap_rebaselines(self):
+        m=Monitor("sensor.example_b1_dc_power")
+        m.observe(states(0))
+        self.assertEqual(m.observe(states(6))["status"],"GAP_REBASELINED")
+        self.assertEqual(m.observe(states(8))["status"],"INSUFFICIENT_WINDOW")
+    def test_counter_drop_after_gap_detected(self):
+        m=Monitor("sensor.example_b1_dc_power")
+        m.observe(states(0))
+        m.observe(states(6))
+        self.assertEqual(m.observe(states(8,exp=12))["status"],"COUNTER_DECREASED")
 if __name__=="__main__":unittest.main()
