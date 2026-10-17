@@ -30,6 +30,7 @@ class ReadAPI:
 from battery_executor import Policy
 from battery_service import BatteryService,read_config
 from ownership import Ownership
+from epoch_coherence import inspect as inspect_epoch_coherence
 
 MEMORY_TEMPLATE = """{% set ns=namespace(rows=[]) %}{% for id in ids %}{% set s=states[id] %}{% if s is not none %}{% set ns.rows=ns.rows+[{'entity_id':id,'state':s.state,'last_reported':s.last_reported.isoformat(),'last_updated':s.last_updated.isoformat(),'last_changed':s.last_changed.isoformat()}] %}{% endif %}{% endfor %}{{ns.rows|to_json}}"""
 def in_memory_times(api,sources):
@@ -143,6 +144,12 @@ def main():
                 report['blockers']=execution.get('safety_reasons',[])
                 if execution.get('actuation_policy_enabled') is not True:report['blockers']=report['blockers']+[report['state']]
             report['ownership']=ownership.state()
+            # Advisory SQLite read only. Never authorizes dispatch; HA gateway stays fail-closed.
+            report['epoch_coherence']=inspect_epoch_coherence(
+                root/'battery-ownership.sqlite',
+                report.get('shared_owner',{}).get('state','UNKNOWN'),
+                states.get('input_boolean.ems_battery_execution_authorized',{}).get('state')=='on',
+                read_config().get('expected_epoch',-1))
             report['owner_states_consistent']=report['shared_owner']['state']==report['ownership']['owner']
             if not report['owner_states_consistent']:report['blockers'].append('OWNERSHIP_MISMATCH_NO_AUTOMATIC_RECONCILIATION')
         except Exception:
