@@ -2,11 +2,10 @@
 The boiler-only scope is not the building load. No PV measurement is inferred.
 """
 import hashlib,json,sqlite3,shutil
-from statistics import median
 from datetime import timedelta
 from pathlib import Path
 from soc_profile import load_profile,planning_policy
-from household_advisory import schedule as household_schedule,load_history as load_household_history,actual_hourly_rows
+from household_advisory import schedule as household_schedule
 from weather_demand import stamp,number
 from building_balance import inspect
 from balance_quality import Quality
@@ -20,7 +19,7 @@ def value(states,entity,unit,at,age=240):
     if not 0<=(stamp(at)-stamp(s['last_reported'])).total_seconds()<=age:raise ValueError('stale_or_future_input:'+entity)
     return number(s['state'])
 
-def plan(states,prediction,at,config,options,building_profile=None,input_safety=None,household_history=None,household_error_biases=None):
+def plan(states,prediction,at,config,options,building_profile=None,input_safety=None):
     approved_planning=planning_policy(load_profile())
     solar=options['observation']['solar_sources']; old=options['sources']
     evidence=config.get('m1_scope_evidence',{})
@@ -143,7 +142,7 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
     try:
         if config.get('household_history_enabled') is not True:raise ValueError('household_history_disabled')
         if not scope_confirmed:raise ValueError('m1_scope_unconfirmed')
-        house=household_schedule(states,at,config,options,building_profile,input_safety,approved_planning,history_override=household_history,error_biases=household_error_biases)
+        house=household_schedule(states,at,config,options,building_profile,input_safety,approved_planning)
         r['household_advisory']=house
         r['building_decisions']=house['decisions']
         r['status']='ADVISORY_HOUSEHOLD_SCHEDULE_READY'
@@ -168,14 +167,6 @@ class Planner:
         try:
             self.c.execute('PRAGMA journal_mode=WAL');self.c.execute('PRAGMA synchronous=FULL')
             self.c.execute('CREATE TABLE IF NOT EXISTS runs(id PRIMARY KEY,fingerprint,record)')
-            self.c.execute('''CREATE TABLE IF NOT EXISTS household_forecasts(
-                source_entity TEXT NOT NULL,target_at TEXT NOT NULL,generated_at TEXT NOT NULL,
-                local_hour INTEGER NOT NULL,predicted_kwh REAL NOT NULL,method TEXT NOT NULL,
-                PRIMARY KEY(source_entity,target_at,generated_at))''')
-            self.c.execute('''CREATE TABLE IF NOT EXISTS household_forecast_errors(
-                source_entity TEXT NOT NULL,target_at TEXT NOT NULL,local_hour INTEGER NOT NULL,
-                predicted_kwh REAL NOT NULL,actual_kwh REAL NOT NULL,error_kwh REAL NOT NULL,
-                observed_at TEXT NOT NULL,PRIMARY KEY(source_entity,target_at))''')
             self.quality=Quality(self.c)
             self.safety=Safety(self.c)
         except Exception:
@@ -188,61 +179,18 @@ class Planner:
         result=self.quality.observe(states,at,options)
         self.safety.observe(states,at,options)
         return result
-    def reconcile_forecast_errors(self,source,observed):
-        if not source:return 0
-        inserted=0
-        for row in observed:
-            prior=self.c.execute('''SELECT predicted_kwh FROM household_forecasts
-                WHERE source_entity=? AND target_at=? AND generated_at<=?
-                ORDER BY generated_at DESC LIMIT 1''',(source,row['target_at'],row['target_at'])).fetchone()
-            if prior:
-                error=row['actual_kwh']-prior[0]
-                cur=self.c.execute('INSERT OR IGNORE INTO household_forecast_errors VALUES(?,?,?,?,?,?,?)',
-                    (source,row['target_at'],row['local_hour'],prior[0],row['actual_kwh'],error,row['observed_at']))
-                inserted+=cur.rowcount
-        return inserted
-    def error_biases(self,source,at):
-        if not source:return {}
-        cutoff=(stamp(at)-timedelta(days=30)).isoformat()
-        rows=self.c.execute('SELECT local_hour,error_kwh FROM household_forecast_errors WHERE source_entity=? AND observed_at>=?',
-                            (source,cutoff)).fetchall()
-        grouped={}
-        for hour,error in rows:grouped.setdefault(hour,[]).append(error)
-        return {hour:{'median_error_kwh':median(errors),'samples':len(errors)} for hour,errors in grouped.items() if len(errors)>=3}
     def run(self,states,prediction,at,config,options):
         self.storage_guard()
-        history=load_household_history() if config.get('household_history_enabled') is True else None
-        observed=actual_hourly_rows(history,at)
-        source=(history or {}).get('source_entity') if isinstance(history,dict) else None
-        self.reconcile_forecast_errors(source,observed)
-        biases=self.error_biases(source,at)
-        record=plan(states,prediction,at,config,options,self.quality.summary(at),self.safety.summary(at),
-                    household_history=history,household_error_biases=biases)
+        record=plan(states,prediction,at,config,options,self.quality.summary(at),self.safety.summary(at))
         digest=hashlib.sha256(json.dumps(dict(planning=config,approved_soc_planning=record['planning_soc_policy'],observation=options['observation'],legacy_sources=options['sources']),sort_keys=True).encode()).hexdigest()
         record['planning_config_fingerprint']=digest
         self.c.execute('BEGIN IMMEDIATE')
         try:
             self.c.execute('INSERT OR IGNORE INTO runs VALUES(?,?,?)',(at,digest,json.dumps(record,allow_nan=False)))
-            advisory=record.get('household_advisory',{})
-            forecast=advisory.get('forecast',{})
-            entity=forecast.get('provenance',{}).get('source_entity')
-            decisions=advisory.get('decisions',[])
-            schedule=decisions[0].get('schedule',[]) if decisions else []
-            if entity and schedule:
-                from datetime import datetime
-                from zoneinfo import ZoneInfo
-                for item in schedule:
-                    hours=item.get('hours');kwh=item.get('load_kwh')
-                    if type(hours) in (int,float) and hours>0 and type(kwh) in (int,float) and kwh>=0:
-                        target=stamp(item['valid_for'])
-                        self.c.execute('INSERT OR IGNORE INTO household_forecasts VALUES(?,?,?,?,?,?)',
-                            (entity,target.isoformat(),stamp(at).isoformat(),target.astimezone(ZoneInfo('Europe/Warsaw')).hour,
-                             kwh/hours,item.get('load_method','unknown')))
             self.c.execute('COMMIT')
         except Exception:
             if self.c.in_transaction:self.c.execute('ROLLBACK')
             raise
         record['persisted_runs']=self.c.execute('SELECT COUNT(*) FROM runs').fetchone()[0]
-        record['forecast_adaptation']={'actual_hourly_errors':self.c.execute('SELECT COUNT(*) FROM household_forecast_errors').fetchone()[0],'forecast_examples':self.c.execute('SELECT COUNT(*) FROM household_forecasts').fetchone()[0],'bias_hours_applied':sorted(biases),'bias_min_samples':3,'bias_cap_fraction':0.5,'status':'UNCALIBRATED_ADVISORY_ONLY','pv_error_feedback':'UNAVAILABLE_ACTUAL_PV_SOURCE_UNCONFIRMED'}
         return record
 
