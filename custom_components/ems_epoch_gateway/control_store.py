@@ -53,9 +53,13 @@ class ControlStore(EpochStore):
             owner, epoch, enabled = self.control_owner(db)
             unresolved = db.execute("SELECT COUNT(*) FROM control_commands WHERE state NOT IN ('REJECTED','ENDED')").fetchone()[0]
             stop = self._emergency_status(db)
+            wear=None
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='setting_write_audit'").fetchone():
+                wear=dict(db.execute("SELECT state,COUNT(*) FROM setting_write_audit WHERE at>? GROUP BY state",(time.time()-86400,)).fetchall())
             db.commit()
         return dict(trusted_owner=owner, trusted_epoch=epoch, physical_authorized=bool(enabled),
                     unresolved_requests=unresolved, emergency_stop=stop,
+                    setting_write_audit_24h=wear, flash_endurance_manufacturer_limit_confirmed=False,
                     automatic_resume=False, physical_dispatch_supported=bool(enabled),
                     status="AUTHORIZED_PENDING_PREFLIGHT" if enabled else "BLOCKED_SAFE",
                     physical_adapter_implemented=True)
@@ -136,6 +140,28 @@ class ControlStore(EpochStore):
                        (json.dumps(result, allow_nan=False, sort_keys=True), time.time(), request_id))
             db.commit()
             return dict(state='UNKNOWN', writes_started=bool(row[1]), result=result)
+
+    def reserve_setting_batch(self, request_id, changes, policy, now, emergency=False):
+        from .write_policy import reserve
+        with closing(self._connect()) as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT state,result FROM control_commands WHERE request_id=?',(request_id,)).fetchone()
+            if row is None or (not emergency and row[0]!='RESERVED') or (emergency and not json.loads(row[1]).get('stop_attempted')):
+                raise ValueError('SETTING_COMMAND_NOT_RESERVED')
+            result=reserve(db,request_id,changes,policy,now,emergency)
+            db.commit()
+            return result
+
+    def finish_setting_write(self, request_id, role, emergency, state):
+        if state not in ('ATTEMPTED_UNKNOWN','SERVICE_RETURNED','UNKNOWN'):
+            raise ValueError('INVALID_SETTING_WRITE_STATE')
+        role=('stop_' if emergency else '')+role
+        with closing(self._connect()) as db:
+            db.execute('BEGIN IMMEDIATE')
+            row=db.execute('SELECT state FROM setting_write_audit WHERE request_id=? AND role=?',(request_id,role)).fetchone()
+            allowed={'ATTEMPTED_UNKNOWN':('RESERVED_UNKNOWN',), 'SERVICE_RETURNED':('ATTEMPTED_UNKNOWN',), 'UNKNOWN':('ATTEMPTED_UNKNOWN',)}
+            if row is None or row[0] not in allowed[state]:raise ValueError('SETTING_WRITE_NO_RETRY')
+            db.execute('UPDATE setting_write_audit SET state=? WHERE request_id=? AND role=?',(state,request_id,role));db.commit()
 
     def active(self, request_id):
         with closing(self._connect()) as db:

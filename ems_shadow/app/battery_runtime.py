@@ -32,11 +32,15 @@ from battery_service import BatteryService,read_config
 from ownership import Ownership
 from epoch_coherence import inspect as inspect_epoch_coherence
 from b1_monitor import Monitor as B1Monitor
+from battery_energy_segments import Ledger as EnergyLedger
 from b1_dc_energy_estimator import EnergyEstimator
 
-MEMORY_TEMPLATE = """{% set ns=namespace(rows=[]) %}{% for id in ids %}{% set s=states[id] %}{% if s is not none %}{% set ns.rows=ns.rows+[{'entity_id':id,'state':s.state,'last_reported':s.last_reported.isoformat(),'last_updated':s.last_updated.isoformat(),'last_changed':s.last_changed.isoformat()}] %}{% endif %}{% endfor %}{{ns.rows|to_json}}"""
+MEMORY_TEMPLATE = """{% set ns=namespace(rows=[]) %}{% for id in ids %}{% set s=states[id] %}{% if s is not none %}{% set ns.rows=ns.rows+[{'entity_id':id,'state':s.state,'attributes':{'unit_of_measurement':s.attributes.get('unit_of_measurement')},'last_reported':s.last_reported.isoformat(),'last_updated':s.last_updated.isoformat(),'last_changed':s.last_changed.isoformat()}] %}{% endif %}{% endfor %}{{ns.rows|to_json}}"""
 def in_memory_times(api,sources):
     ids=sorted(set(v for v in sources.values() if isinstance(v,str) and re.fullmatch(r'(sensor|binary_sensor|number|select)\.[a-z0-9_]+',v)))
+    power=sources.get('b1_power','')
+    if isinstance(power,str) and re.fullmatch(r'sensor\.[a-z0-9_]+_dc_power',power):
+        ids=sorted(set(ids)|{power[:-len('_dc_power')]+'_energy_import',power[:-len('_dc_power')]+'_energy_export'})
     rows=api.call('POST','/template',{'template':MEMORY_TEMPLATE,'variables':{'ids':ids}})
     if isinstance(rows,str):rows=json.loads(rows)
     return states_by_id(rows)
@@ -116,6 +120,7 @@ def main():
     ownership=Ownership(root/'battery-ownership.sqlite',sources)
     service=None
     b1_dc_estimator=EnergyEstimator()
+    energy_ledger=EnergyLedger(root/'battery-energy-integrity.sqlite')
     try:b1_monitor=B1Monitor(sources.get('b1_power'))
     except ValueError:b1_monitor=None  # Diagnostic optional; worker remains operational
     try:service=BatteryService(root,ownership,os.environ['SUPERVISOR_TOKEN'])
@@ -138,6 +143,14 @@ def main():
                 report['b1_dc_energy_estimate']=b1_dc_estimator.invalidate_continuity()
             try:
                 report['b1_counter_diagnostic']=b1_monitor.observe(memory) if b1_monitor and template_status=='AVAILABLE' else {'status':'HA_REPORT_TIMESTAMPS_UNAVAILABLE','advisory_only':True}
+                if b1_monitor and template_status=='AVAILABLE':
+                    imp,exp=(memory[e] for e in b1_monitor.ids[1:])
+                    if imp.get('attributes',{}).get('unit_of_measurement')!=exp.get('attributes',{}).get('unit_of_measurement'):raise ValueError('BATTERY_ENERGY_UNITS_DIFFER')
+                    report['battery_energy_integrity']=energy_ledger.observe(b1_monitor.ids[0],
+                        memory[b1_monitor.ids[0]]['last_reported'],imp['state'],exp['state'],
+                        imp.get('attributes',{}).get('unit_of_measurement'),raw=False)
+                    report['battery_energy_integrity']['aggregation']='ONE_LOGICAL_B1_ENDPOINT_NOT_MODULE_MULTIPLIED'
+
             except Exception:
                 report['b1_counter_diagnostic']={'status':'DIAGNOSTIC_ERROR','advisory_only':True}
             try:report['bms']=bms_snapshot(api,sources.get('b1_soc'),datetime.now(timezone.utc))

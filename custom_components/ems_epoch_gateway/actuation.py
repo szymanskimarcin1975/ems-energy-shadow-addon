@@ -30,6 +30,10 @@ class ActuationGateway:
     def __init__(self, store, adapter, run_db, clock=time.time):
         self.store, self.adapter, self.run_db, self.clock = store, adapter, run_db, clock
         self.lock = asyncio.Lock()
+        if hasattr(adapter, 'bind_write_journal'):
+            adapter.bind_write_journal(
+                lambda *args:self.run_db(store.reserve_setting_batch,*args),
+                lambda *args:self.run_db(store.finish_setting_write,*args))
 
     async def transition(self, expected_epoch, target, reference):
         # Same lock as dispatch and STOP. DB CAS also excludes a second process.
@@ -78,6 +82,8 @@ class ActuationGateway:
                     raise ValueError('BMS_DIRECTION_LIMIT_ZERO')
                 if self.clock() >= request['expires_at']:
                     raise ValueError('REQUEST_EXPIRED')
+                if hasattr(self.adapter, 'prepare_apply'):
+                    await self.adapter.prepare_apply(request, power)
                 await self.run_db(self.store.record, request['request_id'], 'SENDING', True, dict(reply, request=request))
                 started = True  # Conservative: the next await may have partially written.
                 await self.adapter.apply(request, power)

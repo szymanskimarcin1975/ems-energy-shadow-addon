@@ -200,6 +200,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         async def owner(): return dict(trusted_owner='EMS2',trusted_epoch=1,physical_authorized=True,emergency_stop={'latched':False})
         self.adapter=Adapter(hass,self.config,owner,NS(async_get=registry.get)); self.adapter.write_retry_count=lambda:1
         self.adapter.termination_observer=AsyncTermination
+        async def reserve(*args):return 1
+        async def finish(*args):pass
+        self.adapter.bind_write_journal(reserve,finish)
+        self.adapter.config['write_policy']={'basis':'LOCAL_EMS_WRITE_BUDGET_NOT_MANUFACTURER_LIMIT','minimum_interval_s':900,'maximum_writes_per_24h':24}
         async def plan_validation(req, monitoring=False): return self.now+360
         self.adapter.validate_plan=plan_validation
         self.adapter.capture_poll()
@@ -243,7 +247,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError,'NOT_FENCED'): await self.adapter.preflight(request())
     async def test_compound_services_exact_and_no_export_limit_write(self):
         await self.adapter.apply(request(),700)
-        self.assertEqual([(d,s) for d,s,_ in self.calls],[('number','set_value'),('number','set_value'),('select','select_option')])
+        self.assertEqual([(d,s) for d,s,_ in self.calls],[('number','set_value'),('select','select_option')])
         self.assertEqual(self.calls[-1][2]['option'],'Charge from Solar Power')
         self.assertFalse(any('export' in str(x) for x in self.calls))
     async def test_unknown_termination_not_fabricated_from_mode(self):

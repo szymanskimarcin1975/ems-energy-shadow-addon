@@ -30,6 +30,9 @@ class HASolarEdgeAdapter:
         self.termination_observer = termination_observer or self.observe_local_authority
         self.poll_history = []
         self.stop_started = {}
+        self.reserve_writes = None
+        self.finish_write = None
+        self.prepared_writes = {}
         self.sample = None
         self.poll_event = asyncio.Event()
         self.entry_id = config['solaredge_entry_id']
@@ -221,22 +224,56 @@ class HASolarEdgeAdapter:
             self.hass.config.path('ems_shadow/planning_report.yaml'),
             self.config.get('planner', {}), request, datetime.now(timezone.utc), monitoring)
 
+    def bind_write_journal(self, reserve, finish):
+        self.reserve_writes,self.finish_write=reserve,finish
+
+    def _changes(self, commands):
+        # Raw register values from a fresh, successful complete poll. No forced read.
+        sample=self.sample
+        fresh=(sample is not None and self.coordinator.last_update_success is True and
+               0<=self.clock()-sample['poll_completed_at']<=180)
+        modes={'Charge from Solar Power':2,'Charge from Solar Power and Grid':3,
+               'Discharge to Minimize Import':5,'Maximize Self Consumption':7}
+        changes=[]
+        for domain,service,role,value in commands:
+            desired=(1 if role=='control' else modes[value]) if domain=='select' else value
+            changes.append(dict(domain=domain,service=service,role=role,value=value,
+                                required=not(fresh and sample.get(role)==desired)))
+        return changes
+
+    async def prepare_apply(self, request, power):
+        if self.reserve_writes is None:raise ValueError('DURABLE_SETTING_JOURNAL_REQUIRED')
+        direction='charge' if request['option'] in CHARGES else 'discharge'
+        timeout=self.config.get('command_timeout_s')
+        if type(timeout) is not int or not 1<=timeout<=3600:raise ValueError('COMMAND_TIMEOUT_UNVERIFIED')
+        commands=[('number','set_value','timeout',timeout),('number','set_value',direction,power),
+                  ('select','select_option','mode',request['option'])]
+        changes=self._changes(commands)
+        await self.reserve_writes(request['request_id'],changes,self.config.get('write_policy'),self.clock(),False)
+        self.prepared_writes[request['request_id']]=changes
+
+    async def _setting_service(self, request_id, row, emergency):
+        if not row['required']:return
+        role=row['role']
+        await self.finish_write(request_id,role,emergency,'ATTEMPTED_UNKNOWN')
+        try:
+            async with asyncio.timeout(10):
+                await self.hass.services.async_call(row['domain'],row['service'],
+                    {'entity_id':self.config['entities'][role],
+                     'value' if row['domain']=='number' else 'option':row['value']},blocking=True)
+        except BaseException:
+            await asyncio.shield(self.finish_write(request_id,role,emergency,'UNKNOWN'))
+            raise
+        await self.finish_write(request_id,role,emergency,'SERVICE_RETURNED')
+
     async def apply(self, request, power):
-        direction = 'charge' if request['option'] in CHARGES else 'discharge'
-        commands = [('number', 'set_value', 'timeout', self.config['command_timeout_s']),
-                    ('number', 'set_value', direction, power),
-                    ('select', 'select_option', 'mode', request['option'])]
-        timeout = self.config.get('command_timeout_s')
-        if type(timeout) is not int or not 1 <= timeout <= 3600:
-            raise ValueError('COMMAND_TIMEOUT_UNVERIFIED')
-        for domain, service, role, value in commands:
-            sample = await self.preflight(request)
-            if power > sample['direction_limit_w'] or self.clock() >= request['expires_at']:
+        if request['request_id'] not in self.prepared_writes:await self.prepare_apply(request,power)
+        changes=self.prepared_writes.pop(request['request_id'])
+        for row in changes:
+            sample=await self.preflight(request)
+            if power>sample['direction_limit_w'] or self.clock()>=request['expires_at']:
                 raise ValueError('GUARD_CHANGED_DURING_COMPOUND_WRITE')
-            key = 'value' if domain == 'number' else 'option'
-            async with asyncio.timeout(min(10, max(0, request['expires_at'] - self.clock()))):
-                await self.hass.services.async_call(domain, service,
-                    {'entity_id': self.config['entities'][role], key: value}, blocking=True)
+            await self._setting_service(request['request_id'],row,False)
 
     async def confirm_effect(self, request, power, *, after=None):
         # Non-blocking observation of a natural 120-second poll. No refresh/I/O.
@@ -282,16 +319,17 @@ class HASolarEdgeAdapter:
         self.check_bindings()
 
     async def request_local_mode(self, request_id):
-        # Engine persisted stop_attempted BEFORE this method. Neither stage retries.
-        # Stage 1 prevents restoring an old forced direction if Remote is re-enabled.
-        # Stage 2 removes Remote authority; it does not prove timer expiry.
-        for role in ('mode', 'control'):
+        # Separate emergency batch bypasses economic rate/budget, never the
+        # owner/fence/commissioned-procedure checks or durable one-shot reservation.
+        await self.verify_stop_procedure(request_id)
+        if self.reserve_writes is None:raise ValueError('DURABLE_SETTING_JOURNAL_REQUIRED')
+        changes=self._changes([('select','select_option','mode','Maximize Self Consumption'),
+                               ('select','select_option','control','Maximize Self Consumption')])
+        await self.reserve_writes(request_id,changes,{},self.clock(),True)
+        for row in changes:
             await self.verify_stop_procedure(request_id)
-            async with asyncio.timeout(10):
-                await self.hass.services.async_call('select', 'select_option',
-                    {'entity_id': self.config['entities'][role],
-                     'option': 'Maximize Self Consumption'}, blocking=True)
-        self.stop_started[request_id] = self.clock()
+            await self._setting_service(request_id,row,True)
+        self.stop_started[request_id]=self.clock()
 
     async def observe_local_authority(self, request_id, *, after=None):
         started = self.stop_started.get(request_id) if after is None else after
