@@ -103,8 +103,8 @@ def evaluate(states,sources,now,memory=None,profile=None):
         if quality!='HA_UPDATE_FRESH' and not (quality=='HA_UPDATE_STALE_OR_FUTURE' and memory_quality=='HA_WRITE_RECENT_DEVICE_TIME_UNCONFIRMED'):issues.append(role+':'+quality)
     return {'recorded_at':now.isoformat(),'valid_until':(now+timedelta(seconds=60)).isoformat(),'status_semantics':'snapshot; after valid_until process state is UNKNOWN','component':'battery_executor_readiness',
       'state':'BLOCKED','mode':'READ_ONLY','commands_enabled':False,'commands_sent':0,
-      'policy':{'rated_wh':Policy().rated_wh,'max_charge_w':Policy().max_charge_w,'max_discharge_w':Policy().max_discharge_w,'soc_min':None,'soc_max':None,'soc_bounds_approved':False},
-      'blockers':[*(['SOC_PLANNING_OWNER_APPROVAL_MISSING'] if not planning['owner_approved'] else []),'BMS_OPERATING_ENVELOPE_UNCONFIRMED','EXTERNAL_OWNERSHIP_FENCE_UNVERIFIED','PHYSICAL_FALLBACK_UNVERIFIED','NO_BATTERY_EXPORT_UNVERIFIED']+([] if interface['state']=='Remote Control' else ['REMOTE_CONTROL_NOT_CONFIRMED']),
+      'policy':{'rated_wh':Policy().rated_wh,'max_charge_w':Policy().max_charge_w,'max_discharge_w':Policy().max_discharge_w,'ems_operating_soc_min':planning['soc_min'],'ems_operating_soc_max':planning['soc_max'],'soc_operating_range_approved':planning['owner_approved'],'numeric_bms_soc_bounds_required':False},
+      'blockers':[*(['SOC_PLANNING_OWNER_APPROVAL_MISSING'] if not planning['owner_approved'] else []),'BMS_DYNAMIC_LIMITS_REQUIRE_LIVE_PREFLIGHT','EXTERNAL_OWNERSHIP_FENCE_UNVERIFIED','PHYSICAL_FALLBACK_UNVERIFIED','NO_BATTERY_EXPORT_UNVERIFIED']+([] if interface['state']=='Remote Control' else ['REMOTE_CONTROL_NOT_CONFIRMED']),
       'planning_policy':planning,'control_interface':interface,'input_issues':issues,'inputs':result,'device_measurement_time_confirmed':False,'shared_owner':shared_owner(states)}
 
 def main():
