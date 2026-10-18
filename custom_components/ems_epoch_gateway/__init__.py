@@ -24,10 +24,10 @@ DISPATCH_SCHEMA = vol.Schema({
     vol.Required("operation"): cv.string,
     vol.Required("request_id"): cv.string,
     vol.Required("plan_id"): cv.string,
-    vol.Required("owner_epoch"): vol.Any(vol.Coerce(int), cv.string),
+    vol.Required("owner_epoch"): vol.Any(int, cv.string),
     vol.Required("option"): cv.string,
-    vol.Required("power_w"): vol.Any(vol.Coerce(float), cv.string),
-    vol.Required("expires_at"): vol.Any(vol.Coerce(float), cv.string),
+    vol.Required("power_w"): vol.Any(int, float, cv.string),
+    vol.Required("expires_at"): vol.Any(int, float, cv.string),
 }, extra=vol.PREVENT_EXTRA)
 
 
