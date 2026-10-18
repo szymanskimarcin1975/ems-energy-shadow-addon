@@ -175,26 +175,47 @@ class Executor:
             try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return 'BUSY'
             with closing(sqlite3.connect(self.db,timeout=1)) as db:
+                db.execute('PRAGMA journal_mode=WAL')
+                db.execute('PRAGMA synchronous=FULL')
                 db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, mode TEXT NOT NULL,status TEXT NOT NULL)')
                 db.execute('CREATE TABLE IF NOT EXISTS command_identity(request_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,owner_epoch INTEGER NOT NULL,requested_power_w REAL NOT NULL)')
                 from dispatch_lifecycle import initialise,permit,begin,finish
+                from dispatch_reservations import initialise as reservations_init, inspect, reserve, set_status
                 initialise(db)
+                reservations_init(db)
+                existing_reservation=inspect(db,request_id=request_id,plan_id=plan_id,owner_epoch=self.expected_epoch,
+                                              option=option,power_w=maximum_power_w,expires_at=expires_at)
+                if existing_reservation:return existing_reservation
                 row=db.execute('SELECT mode,status FROM commands WHERE id=?',(request_id,)).fetchone()
                 if row:
+                    db.rollback()
                     identity=db.execute('SELECT plan_id,owner_epoch,requested_power_w FROM command_identity WHERE request_id=?',(request_id,)).fetchone()
                     if identity is None:return 'UNKNOWN_IDENTITY_REQUIRES_RECONCILIATION'
                     return 'DUPLICATE_'+row[1] if row[0]==option and identity==(plan_id,self.expected_epoch,maximum_power_w) else 'REQUEST_CONFLICT'
-                if db.execute("SELECT 1 FROM commands WHERE status IN ('PENDING','UNKNOWN')").fetchone():return 'UNKNOWN_REQUIRES_RECONCILIATION'
+                if db.execute("SELECT 1 FROM commands WHERE status IN ('PENDING','UNKNOWN')").fetchone():
+                    db.rollback();return 'UNKNOWN_REQUIRES_RECONCILIATION'
                 lifecycle=permit(db,request_id)
-                if lifecycle:return lifecycle
+                if lifecycle:
+                    db.rollback();return lifecycle
                 check_time=self.clock()
-                if not check_time<expires_at:return 'EXPIRED_REQUEST'
+                if not check_time<expires_at:
+                    db.rollback();return 'EXPIRED_REQUEST'
                 why=self.live_guard(option,check_time,setting_power=maximum_power_w is not None)
-                if why:return why
-                if intent_check is not None and not intent_check():return 'PLAN_CHANGED_OR_EXPIRED'
+                if why:
+                    db.rollback();return why
+                if intent_check is not None and not intent_check():
+                    db.rollback();return 'PLAN_CHANGED_OR_EXPIRED'
+                # Reserve the request atomically before any service transport.
+                # HA reads above remain outside the SQLite write transaction.
+                db.execute('BEGIN IMMEDIATE')
+                reservation=reserve(db,request_id=request_id,plan_id=plan_id,owner_epoch=self.expected_epoch,
+                                    option=option,power_w=maximum_power_w,expires_at=expires_at,now=check_time)
+                if reservation!='RESERVED':
+                    db.rollback();return reservation
                 db.execute('INSERT INTO commands VALUES(?,?,?)',(request_id,option,'PENDING'))
                 db.execute('INSERT INTO command_identity VALUES(?,?,?,?)',(request_id,plan_id,self.expected_epoch,maximum_power_w))
                 begin(db,request_id,option,check_time)
+                set_status(db,request_id,'PENDING',check_time)
                 db.commit()
                 try:
                     # Recheck immediately before issuing. External fencing still mandatory.
@@ -202,10 +223,10 @@ class Executor:
                     why='EXPIRED_REQUEST' if not check_time<expires_at else self.live_guard(option,check_time,setting_power=maximum_power_w is not None)
                     if not why and intent_check is not None and not intent_check():why='PLAN_CHANGED_OR_EXPIRED'
                     if why:
-                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));finish(db,request_id,'REJECTED',self.clock());db.commit();return why
+                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));finish(db,request_id,'REJECTED',self.clock());set_status(db,request_id,'REJECTED',self.clock());db.commit();return why
                     issued_at=self.clock()
                     if not issued_at<expires_at:
-                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));finish(db,request_id,'REJECTED',self.clock());db.commit();return 'EXPIRED_REQUEST'
+                        db.execute('UPDATE commands SET status=? WHERE id=?',('REJECTED',request_id));finish(db,request_id,'REJECTED',self.clock());set_status(db,request_id,'REJECTED',self.clock());db.commit();return 'EXPIRED_REQUEST'
                     requested=math.floor(min(maximum_power_w,self.direction_ceiling_w,self.p.max_charge_w if option in self.CHARGES else self.p.max_discharge_w))
                     if requested<=0:raise GatewayRejected('zero_direction_limit_before_transport')
                     reply=self.ha.dispatch(self.mode,option,requested,request_id=request_id,expires_at=expires_at,plan_id=plan_id,owner_epoch=self.expected_epoch)
@@ -226,6 +247,7 @@ class Executor:
                 except Exception:status='UNKNOWN'
                 db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id))
                 finish(db,request_id,status,self.clock())
+                set_status(db,request_id,status,self.clock())
                 db.commit()
                 return status
 
