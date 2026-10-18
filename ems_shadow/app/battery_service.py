@@ -11,7 +11,7 @@ from fault_guard import FaultGuard,READY
 from plan_bridge import read as read_plan,Journal
 from dispatch_lifecycle import initialise as lifecycle_init,state as lifecycle_state,hold as lifecycle_hold
 CONFIG_PATH=Path('/ha_config/ems_shadow/battery_executor_config.yaml')
-PROOFS=('bms_operating_envelope','physical_fallback','physical_no_export','old_command_reconciled','external_writer_fence')
+PROOFS=('physical_fallback','physical_no_export','old_command_reconciled','external_writer_fence')
 
 def read_config():
  try:
@@ -80,9 +80,15 @@ class BatteryService:
   if telemetry_quality!='HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF':reasons.append(telemetry_quality)
   if mode not in ('READ_ONLY','ACTIVE'):reasons.append('INVALID_EXECUTION_MODE')
   if not planning['owner_approved']:reasons.append('SOC_PLANNING_UNAPPROVED')
-  bounds=config.get('safety_soc_bounds',{});lo,hi=bounds.get('minimum'),bounds.get('maximum')
-  safe=(type(lo) in (int,float) and type(hi) in (int,float) and math.isfinite(lo) and math.isfinite(hi) and 0<=lo<hi<=100)
-  if not safe:reasons.append('BMS_OPERATING_SOC_BOUNDS_UNCONFIRMED')
+  # The owner-approved EMS envelope is an economic command boundary, not an
+  # internal BMS limit. Device protections remain authoritative and live BMS
+  # status/directional power limits are checked immediately before dispatch.
+  operating_min,operating_max=planning.get('soc_min'),planning.get('soc_max')
+  range_approved=(planning.get('owner_approved') is True and
+                  type(operating_min) in (int,float) and type(operating_max) in (int,float) and
+                  math.isfinite(operating_min) and math.isfinite(operating_max) and
+                  0<=operating_min<operating_max<=100)
+  if not range_approved:reasons.append('EMS_OPERATING_SOC_RANGE_UNAPPROVED')
   operational=(profile or {}).get('operational_parameters',{})
   expected={'rated_energy_wh':9200,'max_charge_w':5000,'max_discharge_w':5000,'storage_control_mode':'Remote Control','storage_default_mode':'Maximize Self Consumption','storage_command_timeout_s':3600}
   if any(operational.get(k)!=v for k,v in expected.items()):reasons.append('OPERATIONAL_BASELINE_UNCONFIRMED')
@@ -95,7 +101,7 @@ class BatteryService:
     if float(self.ha.state(sources['timeout'])['state'])!=3600 or self.ha.state(sources['default_mode'])['state']!='Maximize Self Consumption':raise ValueError('remote_settings_mismatch')
    except Exception:reasons.append('LIVE_DEVICE_IDENTITY_UNCONFIRMED')
   enabled=(mode=='ACTIVE' and not reasons)
-  policy=Policy(enabled=enabled,soc_min=max(lo,planning['soc_min']) if safe and planning['owner_approved'] else None,soc_max=min(hi,planning['soc_max']) if safe and planning['owner_approved'] else None,soc_bounds_approved=safe,rated_wh=9200,max_charge_w=5000,max_discharge_w=5000,handover_verified=not reasons,fallback_verified=not reasons,no_export_verified=not reasons)
+  policy=Policy(enabled=enabled,operating_soc_min=operating_min if range_approved else None,operating_soc_max=operating_max if range_approved else None,soc_operating_range_approved=range_approved,rated_wh=9200,max_charge_w=5000,max_discharge_w=5000,handover_verified=not reasons,fallback_verified=not reasons,no_export_verified=not reasons)
   owner=FencedOwnership(self.local,self.ha,config,self.clock)
   self.executor=Executor(self.ha,policy,self.root/'battery-execution.sqlite',self.root/'battery-commands.lock',old_writers=old,soc_entity=sources.get('soc'),mode_entity=sources.get('command_mode'),power_entities=[sources.get('charge_limit'),sources.get('discharge_limit')],owner_entity=config.get('owner_entity'),ownership=owner,expected_epoch=config.get('expected_epoch'),clock=self.clock,control_entity=sources.get('control_mode'),bms_sources=config.get('bms_sources'),telemetry_check=lambda:self.live_quality(telemetry_sources,fault_sources))
   result='READ_ONLY' if mode=='READ_ONLY' else 'BLOCKED_SAFETY'
@@ -122,7 +128,7 @@ class BatteryService:
   self.db.execute('UPDATE runtime SET cycles=cycles+1,last_result=? WHERE id=1',(result,))
   cycles=self.db.execute('SELECT cycles FROM runtime WHERE id=1').fetchone()[0]
   command_statuses=dict(self.db.execute('SELECT status,COUNT(*) FROM commands GROUP BY status'))
-  return {'command_lifecycle':lifecycle_state(self.db),'hold':lifecycle_hold(self.db,self.clock(),bridge['status']) if bridge.get('pending_request') is None else None,'planner_bridge':bridge,'shadow_gateway':shadow_gateway,'fault_quality':fault_quality,'fault_recovery':dict(self.fault_guard.record),'telemetry_quality':telemetry_quality,'telemetry_age_limit_seconds':180,'telemetry_skew_limit_seconds':5,'new_command_block_does_not_cancel_active_command':True,'command_status_counts':command_statuses,'commands_ha_acknowledged':command_statuses.get('ACK',0),'delivery_uncertain':any(command_statuses.get(k,0) for k in ('PENDING','UNKNOWN')),'module':'battery_service','executor_initialized':True,'transport':'HA_QUEUED_COMMAND_GATEWAY','requested_mode':mode,'effective_state':result,'safety_reasons':reasons,'operational_parameters':expected,'planning_soc':planning,'safety_soc_bounds':bounds,'cycles':cycles,'pending_request_present':isinstance(intent,dict),'actuation_policy_enabled':enabled,'device_execution_confirmed':False,'ack_semantics':'ACK means new HA command state readback, not physical completion','automatic_legacy_shutdown':False,'automatic_replay_after_unknown':False,'dispatch_contract':'EMS2_COMPOUND_V28','alternate_select_transport_available':False}
+  return {'command_lifecycle':lifecycle_state(self.db),'hold':lifecycle_hold(self.db,self.clock(),bridge['status']) if bridge.get('pending_request') is None else None,'planner_bridge':bridge,'shadow_gateway':shadow_gateway,'fault_quality':fault_quality,'fault_recovery':dict(self.fault_guard.record),'telemetry_quality':telemetry_quality,'telemetry_age_limit_seconds':180,'telemetry_skew_limit_seconds':5,'new_command_block_does_not_cancel_active_command':True,'command_status_counts':command_statuses,'commands_ha_acknowledged':command_statuses.get('ACK',0),'delivery_uncertain':any(command_statuses.get(k,0) for k in ('PENDING','UNKNOWN')),'module':'battery_service','executor_initialized':True,'transport':'HA_QUEUED_COMMAND_GATEWAY','requested_mode':mode,'effective_state':result,'safety_reasons':reasons,'operational_parameters':expected,'planning_soc':planning,'ems_operating_soc_range':{'minimum':operating_min if range_approved else None,'maximum':operating_max if range_approved else None,'owner_approved':range_approved,'scope':'EMS_COMMAND_ENVELOPE_ONLY'},'hardware_soc_bounds':{'numeric_bms_bounds_exposed':False,'bms_remains_authoritative':True,'ems_does_not_override_bms':True},'cycles':cycles,'pending_request_present':isinstance(intent,dict),'actuation_policy_enabled':enabled,'device_execution_confirmed':False,'ack_semantics':'ACK means new HA command state readback, not physical completion','automatic_legacy_shutdown':False,'automatic_replay_after_unknown':False,'dispatch_contract':'EMS2_COMPOUND_V28','alternate_select_transport_available':False}
  def shadow_gateway_probe(self,intent,epoch):
   """One-shot READ_ONLY request to the installed no-hardware HA fence."""
   try:
