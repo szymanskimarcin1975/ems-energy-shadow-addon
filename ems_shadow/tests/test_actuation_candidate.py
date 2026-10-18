@@ -291,6 +291,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
 
 class PlanAuthorityTests(unittest.TestCase):
     def setUp(self):
+        sys.path.insert(0,str(ROOT/"ems_shadow/app"))
         from test_plan_bridge import report, CFG, NOW
         from plan_bridge import build
         self.report=report(); self.config=CFG.copy(); self.now=NOW
