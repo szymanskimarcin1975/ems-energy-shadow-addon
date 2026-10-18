@@ -22,6 +22,7 @@ OPTIONS = {
 }
 REQUEST_RE = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 PLAN_RE = re.compile(r"[a-f0-9]{64}\Z")
+STOP_REASON_RE = re.compile(r"[A-Z][A-Z0-9_]{1,63}\\Z")
 
 
 def validate(request: dict, now: float | None = None) -> tuple[str, dict | None]:
@@ -129,8 +130,8 @@ class EpochStore:
                 db.execute("BEGIN")
                 owner, epoch = self._owner(db)
                 pending = db.execute("SELECT COUNT(*) FROM requests WHERE state IN ('PENDING','UNKNOWN')").fetchone()[0]
+                emergency = self._emergency_status(db)
                 db.commit()
-            emergency = self._emergency_status(db)
             return {
                 "status": "EMERGENCY_STOP_LATCHED" if emergency["latched"] else "BLOCKED_SAFE",
                 "emergency_stop": emergency,
