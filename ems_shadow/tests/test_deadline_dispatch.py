@@ -40,3 +40,27 @@ class Tests(unittest.TestCase):
   self.assertGreater(r['schedule'][0]['charge_ac_kwh'],0)
   self.assertEqual(r['schedule'][0]['import_kwh'],0)
   self.assertLess(r['schedule'][1]['import_kwh'],.8)
+
+ def test_owner_95_ceiling_clamps_charge_and_deadline(self):
+  ceiling=9.2*.95
+  slots=[self.slot(.6368,pv=5),self.slot(1.5109,load=2,target=ceiling)]
+  r=simulate_deadlines(slots,9.2,6.,.46,5,5,.9,.9,maximum_kwh=ceiling)
+  self.assertEqual(r['deadline_status'],'MET_IN_SIMULATION')
+  self.assertAlmostEqual(r['scenario_ceiling_kwh'],ceiling)
+  self.assertTrue(all(x['stored_kwh']<=ceiling+1e-9 for x in r['schedule']))
+  self.assertFalse(r['control_enabled'])
+
+ def test_initial_100_above_95_ceiling_never_charges_higher(self):
+  ceiling=9.2*.95
+  slots=[self.slot(.6368,pv=5),self.slot(1.5109,load=1)]
+  r=simulate_deadlines(slots,9.2,9.2,.46,5,5,.9,.9,maximum_kwh=ceiling)
+  self.assertTrue(r['initial_above_scenario_ceiling'])
+  previous=9.2
+  for row in r['schedule']:
+   self.assertLessEqual(row['stored_kwh'],max(ceiling,previous)+1e-9)
+   if previous>ceiling+1e-9:self.assertAlmostEqual(row['charge_ac_kwh'],0.)
+   previous=row['stored_kwh']
+
+ def test_target_above_approved_ceiling_rejected(self):
+  with self.assertRaisesRegex(ValueError,'invalid_target'):
+   simulate_deadlines([self.slot(target=9.2)],9.2,5.,.46,5,5,.9,.9,maximum_kwh=8.74)
