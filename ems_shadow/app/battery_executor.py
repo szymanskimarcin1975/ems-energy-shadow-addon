@@ -100,9 +100,10 @@ class SupervisorHA:
 @dataclass(frozen=True)
 class Policy:
     enabled: bool=False
-    soc_min: float|None=None
-    soc_max: float|None=None
-    soc_bounds_approved: bool=False
+    operating_soc_min: float|None=None
+    operating_soc_max: float|None=None
+    # Owner-approved EMS operating envelope; not an internal BMS boundary.
+    soc_operating_range_approved: bool=False
     rated_wh: int=9200
     max_charge_w: int=5000
     max_discharge_w: int=5000
@@ -127,9 +128,9 @@ class Executor:
     def preflight(self):
         p=self.p
         if p.enabled is not True:return 'DISABLED'
-        if not (p.soc_bounds_approved is True and p.handover_verified is True and p.no_export_verified is True and p.fallback_verified is True):return 'UNAPPROVED_SAFETY'
-        if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (p.soc_min,p.soc_max)):return 'INVALID_SOC_LIMITS'
-        if not 0<=p.soc_min<p.soc_max<=100:return 'INVALID_SOC_LIMITS'
+        if not (p.soc_operating_range_approved is True and p.handover_verified is True and p.no_export_verified is True and p.fallback_verified is True):return 'UNAPPROVED_SAFETY'
+        if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in (p.operating_soc_min,p.operating_soc_max)):return 'INVALID_SOC_LIMITS'
+        if not 0<=p.operating_soc_min<p.operating_soc_max<=100:return 'INVALID_SOC_LIMITS'
         if not self.old or len(self.powers)!=2 or not self.owner_entity or not self.control_entity:return 'INCOMPLETE_CONFIGURATION'
         if set(self.bms)!={'status','max_charge','peak_charge','max_discharge','peak_discharge'}:return 'BMS_SOURCES_UNCONFIRMED'
         if self.local_owner_guard():return 'OWNERSHIP_UNCONFIRMED'
@@ -187,9 +188,9 @@ class Executor:
             soc=float(s['state'])
             if not math.isfinite(soc):return 'INVALID_SOC'
         except (KeyError,TypeError,ValueError):return 'INVALID_SOC'
-        if not self.p.soc_min<=soc<=self.p.soc_max:return 'SOC_OUT_OF_RANGE'
-        if option=='Discharge to Minimize Import' and soc<=self.p.soc_min:return 'SOC_RESERVE'
-        if option in self.CHARGES and soc>=self.p.soc_max:return 'SOC_CEILING'
+        if not self.p.operating_soc_min<=soc<=self.p.operating_soc_max:return 'SOC_OUT_OF_RANGE'
+        if option=='Discharge to Minimize Import' and soc<=self.p.operating_soc_min:return 'SOC_RESERVE'
+        if option in self.CHARGES and soc>=self.p.operating_soc_max:return 'SOC_CEILING'
         for entity,limit in zip(self.powers,(self.p.max_charge_w,self.p.max_discharge_w)):
             try:
                 value=float(self.ha.state(entity)['state'])

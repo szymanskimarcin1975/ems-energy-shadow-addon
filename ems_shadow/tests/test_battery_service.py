@@ -25,7 +25,7 @@ class TestHA(HA):
   return super().state(e)
 def config(mode='ACTIVE'):
  now=datetime.now(timezone.utc);device={'model':'example-inverter','firmware':'example-firmware'}
- return {'telemetry_sources':{'m1_power':'sensor.example_m1','b1_power':'sensor.example_b1','soc':'sensor.example_soc'},'mode':mode,'device':device,'verified_evidence':{k:dict(verified=True,device=device,reference='synthetic-offline-evidence',verified_at=(now-timedelta(seconds=10)).isoformat(),valid_until=(now+timedelta(seconds=60)).isoformat()) for k in PROOFS},'safety_soc_bounds':{'minimum':0,'maximum':100},'owner_entity':'input_select.example_owner','authorization_entity':'input_boolean.example_auth','expected_epoch':2,'old_writers':['automation.old'],'sources':{'soc':'sensor.example_soc','command_mode':'select.mode','control_mode':'select.example_control','charge_limit':'number.charge','discharge_limit':'number.discharge','device_model':'sensor.example_model','device_firmware':'sensor.example_firmware','timeout':'number.example_timeout','default_mode':'select.example_default'},'bms_sources':{k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')},'pending_request':{'maximum_power_w':5000,'plan_id':'a'*64,'request_id':'example_request','option':'Charge from Solar Power','expires_at':(now+timedelta(seconds=45)).isoformat()}}
+ return {'telemetry_sources':{'m1_power':'sensor.example_m1','b1_power':'sensor.example_b1','soc':'sensor.example_soc'},'mode':mode,'device':device,'verified_evidence':{k:dict(verified=True,device=device,reference='synthetic-offline-evidence',verified_at=(now-timedelta(seconds=10)).isoformat(),valid_until=(now+timedelta(seconds=60)).isoformat()) for k in PROOFS},'owner_entity':'input_select.example_owner','authorization_entity':'input_boolean.example_auth','expected_epoch':2,'old_writers':['automation.old'],'sources':{'soc':'sensor.example_soc','command_mode':'select.mode','control_mode':'select.example_control','charge_limit':'number.charge','discharge_limit':'number.discharge','device_model':'sensor.example_model','device_firmware':'sensor.example_firmware','timeout':'number.example_timeout','default_mode':'select.example_default'},'bms_sources':{k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')},'pending_request':{'maximum_power_w':5000,'plan_id':'a'*64,'request_id':'example_request','option':'Charge from Solar Power','expires_at':(now+timedelta(seconds=45)).isoformat()}}
 class Tests(unittest.TestCase):
  def setUp(self):
   fault=patch('fault_guard.FaultGuard.observe',return_value=READY);fault.start();self.addCleanup(fault.stop)
@@ -46,8 +46,16 @@ class Tests(unittest.TestCase):
   r=self.s.cycle(config(),PROFILE);self.assertEqual(r['effective_state'],'ACK');self.assertEqual(len(self.ha.calls),1);self.assertFalse(r['device_execution_confirmed']);self.assertEqual(r['commands_ha_acknowledged'],1)
  def test_missing_hardware_evidence_does_not_disable_legacy(self):
   c=config();c['verified_evidence']={};r=self.s.cycle(c,PROFILE);self.assertFalse(r['actuation_policy_enabled']);self.assertEqual(self.ha.calls,[]);self.assertIn('PHYSICAL_FALLBACK_UNVERIFIED',r['safety_reasons'])
- def test_unknown_soc_safety_not_replaced_by_planning_range(self):
-  c=config();c['safety_soc_bounds']={};r=self.s.cycle(c,PROFILE);self.assertIn('BMS_OPERATING_SOC_BOUNDS_UNCONFIRMED',r['safety_reasons']);self.assertEqual(self.ha.calls,[])
+ def test_owner_approved_soc_range_is_not_misreported_as_bms_limit(self):
+  c=config('READ_ONLY');profile={'soc_operating_bounds':{'minimum':5,'maximum':95,'owner_approved':True},'operational_parameters':PROFILE['operational_parameters']}
+  r=self.s.cycle(c,profile)
+  self.assertNotIn('BMS_OPERATING_SOC_BOUNDS_UNCONFIRMED',r['safety_reasons'])
+  self.assertEqual(r['ems_operating_soc_range'],{'minimum':5,'maximum':95,'owner_approved':True,'scope':'EMS_COMMAND_ENVELOPE_ONLY'})
+  self.assertEqual(r['hardware_soc_bounds'],{'numeric_bms_bounds_exposed':False,'bms_remains_authoritative':True,'ems_does_not_override_bms':True})
+  self.assertEqual((self.s.executor.p.operating_soc_min,self.s.executor.p.operating_soc_max),(5,95))
+  self.assertTrue(self.s.executor.p.soc_operating_range_approved)
+  self.assertNotIn('bms_operating_envelope',PROOFS)
+  self.assertFalse(r['actuation_policy_enabled']);self.assertEqual(self.ha.calls,[])
  def test_old_running_blocks_before_intent(self):
   self.ha.old='on';r=self.s.cycle(config(),PROFILE);self.assertEqual(r['effective_state'],'OWNERSHIP_UNCONFIRMED');self.assertEqual(self.ha.calls,[])
  def test_shared_legacy_blocks(self):

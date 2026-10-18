@@ -28,7 +28,7 @@ class Owner:
 class Tests(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.ha=HA()
-  self.p=Policy(enabled=True,soc_min=30,soc_max=90,soc_bounds_approved=True,handover_verified=True,no_export_verified=True,fallback_verified=True)
+  self.p=Policy(enabled=True,operating_soc_min=5,operating_soc_max=95,soc_operating_range_approved=True,handover_verified=True,no_export_verified=True,fallback_verified=True)
  def executor(self,p=None):
   return Executor(self.ha,p or self.p,Path(self.tmp.name)/'c.sqlite',Path(self.tmp.name)/'l',old_writers=['automation.old'],soc_entity='sensor.example_soc',mode_entity='select.mode',power_entities=['number.charge','number.discharge'],owner_entity='input_select.example_owner',ownership=Owner(),expected_epoch=2,control_entity='select.example_control',telemetry_check=lambda:'HA_TRANSPORT_CHECK_PASSED_NOT_DEVICE_PROOF',bms_sources={k:'sensor.example_bms_'+k for k in ('status','max_charge','peak_charge','max_discharge','peak_discharge')})
  def run_command(self,x,id='r',mode='Charge from Solar Power'):
@@ -36,11 +36,11 @@ class Tests(unittest.TestCase):
  def test_disabled_no_files_no_api(self):
   self.assertEqual(self.run_command(self.executor(Policy())),'DISABLED');self.assertEqual(list(Path(self.tmp.name).iterdir()),[]);self.assertEqual(self.ha.calls,[])
  def test_no_approval_blocks(self):
-  self.assertEqual(self.run_command(self.executor(replace(self.p,soc_bounds_approved=False))),'UNAPPROVED_SAFETY');self.assertEqual(self.ha.calls,[])
+  self.assertEqual(self.run_command(self.executor(replace(self.p,soc_operating_range_approved=False))),'UNAPPROVED_SAFETY');self.assertEqual(self.ha.calls,[])
  def test_old_running_blocks(self):
   self.ha.old='on';self.assertEqual(self.run_command(self.executor()),'OLD_WRITER_NOT_QUIESCENT');self.assertEqual(self.ha.calls,[])
  def test_reserve_blocks(self):
-  self.ha.soc=30;self.assertEqual(self.run_command(self.executor(),mode='Discharge to Minimize Import'),'SOC_RESERVE')
+  self.ha.soc=5;self.assertEqual(self.run_command(self.executor(),mode='Discharge to Minimize Import'),'SOC_RESERVE')
  def test_export_forbidden(self):
   self.assertEqual(self.run_command(self.executor(),mode='Discharge to Maximize Export'),'FORBIDDEN_MODE')
  def test_dedup_restart(self):
@@ -53,12 +53,15 @@ class Tests(unittest.TestCase):
  def test_nonfinite_soc(self):
   self.ha.soc=float('nan');self.assertEqual(self.run_command(self.executor()),'INVALID_SOC')
  def test_soc_ceiling_blocks_charge(self):
-  self.ha.soc=90;self.assertEqual(self.run_command(self.executor()),'SOC_CEILING');self.assertEqual(self.ha.calls,[])
+  self.ha.soc=95;self.assertEqual(self.run_command(self.executor()),'SOC_CEILING');self.assertEqual(self.ha.calls,[])
+ def test_owner_operating_envelope_blocks_charge_and_discharge_outside_5_95(self):
+  self.ha.soc=96;self.assertEqual(self.run_command(self.executor()),'SOC_OUT_OF_RANGE');self.assertEqual(self.ha.calls,[])
+  self.ha.soc=4;self.assertEqual(self.run_command(self.executor(),'low-soc','Discharge to Minimize Import'),'SOC_OUT_OF_RANGE');self.assertEqual(self.ha.calls,[])
  def test_unknown_survives_reopen(self):
   self.ha.fail=True;self.assertEqual(self.run_command(self.executor()),'UNKNOWN')
   self.ha.fail=False;self.assertEqual(self.run_command(self.executor(),'after_restart'),'UNKNOWN_REQUIRES_RECONCILIATION')
  def test_missing_soc_limits(self):
-  self.assertEqual(self.run_command(self.executor(replace(self.p,soc_min=None))),'INVALID_SOC_LIMITS')
+  self.assertEqual(self.run_command(self.executor(replace(self.p,operating_soc_min=None))),'INVALID_SOC_LIMITS')
  def test_transport_exception_has_no_original_secret(self):
   from battery_executor import SupervisorHA
   from unittest.mock import patch
