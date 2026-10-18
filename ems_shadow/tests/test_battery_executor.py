@@ -54,9 +54,9 @@ class Tests(unittest.TestCase):
   self.ha.soc=float('nan');self.assertEqual(self.run_command(self.executor()),'INVALID_SOC')
  def test_soc_ceiling_blocks_charge(self):
   self.ha.soc=95;self.assertEqual(self.run_command(self.executor()),'SOC_CEILING');self.assertEqual(self.ha.calls,[])
- def test_owner_operating_envelope_blocks_charge_and_discharge_outside_5_95(self):
-  self.ha.soc=96;self.assertEqual(self.run_command(self.executor()),'SOC_OUT_OF_RANGE');self.assertEqual(self.ha.calls,[])
-  self.ha.soc=4;self.assertEqual(self.run_command(self.executor(),'low-soc','Discharge to Minimize Import'),'SOC_OUT_OF_RANGE');self.assertEqual(self.ha.calls,[])
+ def test_operating_envelope_blocks_only_outward_direction(self):
+  self.ha.soc=96;self.assertEqual(self.run_command(self.executor()),'SOC_CEILING');self.assertEqual(self.ha.calls,[])
+  self.ha.soc=4;self.assertEqual(self.run_command(self.executor(),'low-soc','Discharge to Minimize Import'),'SOC_RESERVE');self.assertEqual(self.ha.calls,[])
  def test_unknown_survives_reopen(self):
   self.ha.fail=True;self.assertEqual(self.run_command(self.executor()),'UNKNOWN')
   self.ha.fail=False;self.assertEqual(self.run_command(self.executor(),'after_restart'),'UNKNOWN_REQUIRES_RECONCILIATION')
@@ -133,3 +133,15 @@ class Tests(unittest.TestCase):
  def test_nan_bms_blocks(self):
   self.ha.peak_charge=float('nan');self.assertEqual(self.run_command(self.executor()),'BMS_LIMIT_INVALID')
 
+
+class DirectionalSOCTests(unittest.TestCase):
+ setUp=Tests.setUp
+ executor=Tests.executor
+ def test_soc_100_can_return_by_discharge_but_not_charge(self):
+  self.ha.soc=100;x=self.executor()
+  self.assertEqual(x.live_guard('Charge from Solar Power',datetime.now(timezone.utc)),'SOC_CEILING')
+  self.assertIsNone(x.live_guard('Discharge to Minimize Import',datetime.now(timezone.utc)))
+ def test_soc_4_can_return_by_charge_but_not_discharge(self):
+  self.ha.soc=4;x=self.executor()
+  self.assertIsNone(x.live_guard('Charge from Solar Power',datetime.now(timezone.utc)))
+  self.assertEqual(x.live_guard('Discharge to Minimize Import',datetime.now(timezone.utc)),'SOC_RESERVE')

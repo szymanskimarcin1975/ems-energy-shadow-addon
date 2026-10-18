@@ -49,15 +49,15 @@ class SupervisorHA:
         # interpreting it; only an explicit pre-write rejection is unambiguous.
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}',request_id or '') or not re.fullmatch(r'[a-f0-9]{64}',plan_id or '') or type(owner_epoch) is not int or owner_epoch<0:
             raise GatewayRejected('invalid_local_dispatch_identity_before_transport')
-        result=self._request('/services/script/ems_battery_command_gateway?return_response',
-          {'caller':'EMS2','operation':'dispatch','command_value':{'option':option,'power_w':power_w},
+        result=self._request('/services/ems_epoch_gateway/dispatch?return_response',
+          {'caller':'EMS2','operation':'dispatch','execution_mode':'ACTIVE','option':option,'power_w':power_w,
            'request_id':request_id,'expires_at':expires_at.timestamp(),'plan_id':plan_id,'owner_epoch':owner_epoch})
         reply=result.get('service_response') if isinstance(result,dict) else None
         if not isinstance(reply,dict) or reply.get('gateway_contract')!='EMS2_COMPOUND_V28' or reply.get('request_id')!=request_id or reply.get('plan_id')!=plan_id or type(reply.get('owner_epoch')) is not int or reply['owner_epoch']!=owner_epoch:
             raise RuntimeError('gateway_identity_or_outcome_unknown')
         if reply.get('status')=='REJECTED' and reply.get('writes_started') is False:
             raise GatewayRejected('gateway_confirmed_rejection_before_writes')
-        if reply.get('status')!='SERVICE_COMPLETED' or reply.get('writes_started') is not True or reply.get('owner')!='EMS2' or reply.get('option')!=option:
+        if reply.get('status')!='SERVICE_COMPLETED' or reply.get('device_execution_confirmed') is not True or reply.get('writes_started') is not True or reply.get('owner')!='EMS2' or reply.get('option')!=option:
             raise RuntimeError('gateway_outcome_unknown')
         return reply
 
@@ -188,7 +188,7 @@ class Executor:
             soc=float(s['state'])
             if not math.isfinite(soc):return 'INVALID_SOC'
         except (KeyError,TypeError,ValueError):return 'INVALID_SOC'
-        if not self.p.operating_soc_min<=soc<=self.p.operating_soc_max:return 'SOC_OUT_OF_RANGE'
+        if not 0<=soc<=100:return 'INVALID_SOC'
         if option=='Discharge to Minimize Import' and soc<=self.p.operating_soc_min:return 'SOC_RESERVE'
         if option in self.CHARGES and soc>=self.p.operating_soc_max:return 'SOC_CEILING'
         for entity,limit in zip(self.powers,(self.p.max_charge_w,self.p.max_discharge_w)):

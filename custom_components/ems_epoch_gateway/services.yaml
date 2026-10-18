@@ -76,3 +76,32 @@ emergency_stop:
       required: false
       selector:
         object:
+
+transition_owner:
+  name: Transition trusted battery owner (candidate)
+  description: Administrator-only. Requires configured verified fencing and command reconciliation. Disabled by default.
+  fields:
+    expected_epoch:
+      required: true
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 1000000
+    target:
+      required: true
+      selector:
+        select:
+          options: [LEGACY, EMS2]
+    reference:
+      required: true
+      selector:
+        text:
+stop_command:
+  name: Request verified command termination (candidate)
+  description: A one-shot attempt, not HOLD. Missing device termination evidence remains UNKNOWN.
+  fields:
+    request_id:
+      required: true
+      selector:
+        text:
