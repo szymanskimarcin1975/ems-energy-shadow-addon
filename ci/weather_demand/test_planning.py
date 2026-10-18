@@ -1,4 +1,5 @@
 import json,sqlite3,tempfile,unittest,subprocess,sys
+from unittest.mock import patch
 from pathlib import Path
 from unittest.mock import patch
 from collections import namedtuple
@@ -90,6 +91,48 @@ class Tests(unittest.TestCase):
    s=Planner(Path(d)/'a.sqlite');s.c.execute('PRAGMA query_only=ON')
    with self.assertRaises(sqlite3.Error):s.run(*fixture())
    self.assertEqual(s.c.execute('select count(*) from runs').fetchone()[0],0);s.c.close()
+
+ def test_approved_5_95_planner_accepts_live_soc_100_without_clipping_or_charging(self):
+  a=list(fixture());a[0]['sensor.example_b1_soc']['state']='100'
+  profile={'soc_operating_bounds':{'minimum':5,'maximum':95,'owner_approved':True}}
+  with patch('planning_runtime.load_profile',return_value=profile):r=plan(*a)
+  self.assertEqual(r['status'],'HYPOTHETICAL_SCHEDULE_READY')
+  self.assertEqual(r['battery']['soc_percent'],100)
+  self.assertEqual(r['battery']['simulated_min_soc_percent'],5)
+  self.assertEqual(r['battery']['simulated_max_soc_percent'],95)
+  self.assertEqual(len(r['decisions']),4)
+  ceiling=9.2*.95
+  for decision in r['decisions']:
+   previous=9.2
+   for row in decision['schedule']:
+    self.assertLessEqual(row['stored_kwh'],max(previous,ceiling)+1e-9)
+    if previous>ceiling+1e-9:self.assertEqual(row['charge_ac_kwh'],0)
+    if row['stored_kwh']>ceiling+1e-9:self.assertEqual(row['charge_ac_kwh'],0)
+    previous=row['stored_kwh']
+  self.assertFalse(r['control_enabled'])
+
+ def test_approved_5_95_planner_honors_floor_and_ceiling(self):
+  profile={'soc_operating_bounds':{'minimum':5,'maximum':95,'owner_approved':True}}
+  a=list(fixture());a[0]['sensor.example_b1_soc']['state']='5'
+  with patch('planning_runtime.load_profile',return_value=profile):low=plan(*a)
+  self.assertEqual(low['status'],'HYPOTHETICAL_SCHEDULE_READY')
+  floor=9.2*.05
+  for decision in low['decisions']:
+   previous=floor
+   for row in decision['schedule']:
+    self.assertGreaterEqual(row['stored_kwh'],min(previous,floor)-1e-9)
+    if previous<=floor+1e-9:self.assertEqual(row['discharge_ac_kwh'],0)
+    previous=row['stored_kwh']
+  a=list(fixture());a[0]['sensor.example_b1_soc']['state']='95'
+  with patch('planning_runtime.load_profile',return_value=profile):high=plan(*a)
+  self.assertEqual(high['battery']['soc_percent'],95)
+  ceiling=9.2*.95
+  for decision in high['decisions']:
+   self.assertTrue(all(row['stored_kwh']<=ceiling+1e-9 for row in decision['schedule']))
+   self.assertTrue(all(not (row['stored_kwh']>=ceiling-1e-9 and row['charge_ac_kwh']>1e-9)
+                       for row in decision['schedule']))
+  self.assertFalse(low['control_enabled']);self.assertFalse(high['control_enabled'])
+
 if __name__=='__main__':unittest.main()
 
 import unittest
