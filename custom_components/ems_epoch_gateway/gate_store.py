@@ -104,6 +104,21 @@ class EpochStore:
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS emergency_latch(
+                id INTEGER PRIMARY KEY CHECK(id=1),
+                latched INTEGER NOT NULL CHECK(latched IN (0,1)),
+                first_event_id INTEGER,
+                last_event_id INTEGER
+            )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS emergency_events(
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reason TEXT NOT NULL,
+                request_id TEXT,
+                owner_epoch INTEGER,
+                created_at REAL NOT NULL,
+                evidence_json TEXT NOT NULL
+            )""")
+            db.execute("INSERT OR IGNORE INTO emergency_latch VALUES(1,0,NULL,NULL)")
             db.execute("INSERT OR IGNORE INTO trusted_owner VALUES(1,'LEGACY',0,0)")
             self._owner(db)
             db.commit()
@@ -115,8 +130,10 @@ class EpochStore:
                 owner, epoch = self._owner(db)
                 pending = db.execute("SELECT COUNT(*) FROM requests WHERE state IN ('PENDING','UNKNOWN')").fetchone()[0]
                 db.commit()
+            emergency = self._emergency_status(db)
             return {
-                "status": "BLOCKED_SAFE",
+                "status": "EMERGENCY_STOP_LATCHED" if emergency["latched"] else "BLOCKED_SAFE",
+                "emergency_stop": emergency,
                 "trusted_owner": owner, "trusted_epoch": epoch,
                 "unresolved_requests": pending,
                 "durable_request_journal": True,
@@ -132,6 +149,84 @@ class EpochStore:
                 "physical_dispatch_supported": False, "writes_started": False,
             }
 
+    @staticmethod
+    def _emergency_status(db) -> dict:
+        row = db.execute("SELECT latched,first_event_id,last_event_id FROM emergency_latch WHERE id=1").fetchone()
+        if row is None:
+            raise ValueError("EMERGENCY_LATCH_MISSING")
+        last = None
+        count = 0
+        if row[2] is not None:
+            last = db.execute("SELECT reason,request_id,owner_epoch,created_at FROM emergency_events WHERE event_id=?",
+                              (row[2],)).fetchone()
+            count = db.execute("SELECT COUNT(*) FROM emergency_events").fetchone()[0]
+        return {
+            "latched": bool(row[0]),
+            "first_event_id": row[1],
+            "last_event_id": row[2],
+            "last_reason": last[0] if last else None,
+            "last_request_id": last[1] if last else None,
+            "last_owner_epoch": last[2] if last else None,
+            "last_at": last[3] if last else None,
+            "event_count": count,
+            "automatic_resume": False,
+            "active_device_command_canceled": False,
+        }
+
+    def emergency_status(self) -> dict:
+        with closing(self._connect()) as db:
+            db.execute("BEGIN")
+            result = self._emergency_status(db)
+            db.commit()
+            return result
+
+    def trip_emergency_stop(self, reason: str, request_id=None, owner_epoch=None, evidence=None) -> dict:
+        """Durably latch a stop and append the cause; there is intentionally no auto-clear."""
+        if not isinstance(reason, str) or not STOP_REASON_RE.fullmatch(reason):
+            raise ValueError("INVALID_STOP_REASON")
+        if request_id is not None and (not isinstance(request_id, str) or not REQUEST_RE.fullmatch(request_id)):
+            raise ValueError("INVALID_REQUEST_ID")
+        if owner_epoch is not None and (type(owner_epoch) is not int or owner_epoch < 0):
+            raise ValueError("INVALID_OWNER_EPOCH")
+        if evidence is None:
+            evidence = {}
+        if not isinstance(evidence, dict):
+            raise ValueError("INVALID_EVIDENCE")
+        safe_evidence = {}
+        for key, value in evidence.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,48}", key):
+                raise ValueError("INVALID_EVIDENCE_KEY")
+            if not isinstance(value, (str, int, float, bool, type(None))) or (isinstance(value, float) and not math.isfinite(value)):
+                raise ValueError("INVALID_EVIDENCE_VALUE")
+            safe_evidence[key] = value
+        payload = json.dumps(safe_evidence, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        if len(payload) > 4096:
+            raise ValueError("EVIDENCE_TOO_LARGE")
+        now = time.time()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            latch = db.execute("SELECT latched,first_event_id FROM emergency_latch WHERE id=1").fetchone()
+            if latch is None:
+                raise ValueError("EMERGENCY_LATCH_MISSING")
+            cur = db.execute(
+                "INSERT INTO emergency_events(reason,request_id,owner_epoch,created_at,evidence_json) VALUES(?,?,?,?,?)",
+                (reason, request_id, owner_epoch, now, payload),
+            )
+            event_id = cur.lastrowid
+            first = latch[1] if latch[0] else event_id
+            db.execute("UPDATE emergency_latch SET latched=1,first_event_id=?,last_event_id=? WHERE id=1",
+                       (first, event_id))
+            db.commit()
+        return {
+            "status": "LATCHED",
+            "reason": reason,
+            "event_id": event_id,
+            "new_commands_blocked": True,
+            "active_command_state": "UNKNOWN_ACTIVE_COMMAND",
+            "active_command_canceled": False,
+            "automatic_resume": False,
+        }
+
     def reserve(self, normalized: dict) -> str:
         """Commit durable PENDING *before* any possible transport.
 
@@ -141,6 +236,10 @@ class EpochStore:
         digest = request_hash(normalized)
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            stop = db.execute("SELECT latched FROM emergency_latch WHERE id=1").fetchone()
+            if stop is None or stop[0] != 0:
+                db.commit()
+                return "EMERGENCY_STOP_LATCHED"
             owner, epoch = self._owner(db)
             row = db.execute("SELECT payload_sha256,state FROM requests WHERE request_id=?",
                              (normalized["request_id"],)).fetchone()
@@ -191,6 +290,10 @@ class EpochStore:
             return reply
         try:
             outcome = self.reserve(normalized)
+            if outcome == "EMERGENCY_STOP_LATCHED":
+                reply["reason"] = outcome
+                reply["emergency_stop_latched"] = True
+                return reply
             if outcome == "RESERVED_BEFORE_TRANSPORT":
                 outcome = self.finish_without_write(normalized)
             reply["reason"] = outcome
