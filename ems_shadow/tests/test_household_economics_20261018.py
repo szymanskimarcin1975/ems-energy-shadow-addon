@@ -78,5 +78,35 @@ class AdvisoryEconomics(unittest.TestCase):
   self.assertIsNone(result['workday_soc_deadline']['target_percent'])
   self.assertEqual(result['workday_soc_deadline']['policy'],'FORECAST_NET_EXPENSIVE_HOURS_ENERGY_NOT_FIXED_100_PERCENT')
 
+  # Live SOC may exceed the owner-approved planning ceiling; preserve the
+  # observation and permit only hold/discharge until the plan is back in range.
+  for live_soc in (100,95,5):
+   states['sensor.example_soc']['state']=str(live_soc)
+   with patch('household_advisory.load_history',return_value=None):
+    boundary=schedule(states,now_iso,config,options,profile,{'current_ha_set_valid':True},
+                      {'owner_approved':True,'soc_min':5,'soc_max':95})
+   self.assertEqual(len(boundary['decisions']),4)
+   ceiling=9.2*.95;floor=9.2*.05
+   for d in boundary['decisions']:
+    self.assertEqual(d['initial_stored_kwh'],9.2*live_soc/100)
+    previous=9.2*live_soc/100
+    for row in d['schedule']:
+     if previous>ceiling+1e-9:self.assertEqual(row['charge_ac_kwh'],0)
+     if previous<=floor+1e-9:self.assertEqual(row['discharge_ac_kwh'],0)
+     self.assertLessEqual(row['stored_kwh'],max(previous,ceiling)+1e-9)
+     self.assertGreaterEqual(row['stored_kwh'],min(previous,floor)-1e-9)
+     previous=row['stored_kwh']
+
+  states['sensor.example_soc']['state']='50'
+  config['bms_peak_charge_entity']='sensor.example_peak_charge'
+  states['sensor.example_peak_charge']=reading(0,'W')
+  with patch('household_advisory.load_history',return_value=None):
+   zero_bms=schedule(states,now_iso,config,options,profile,{'current_ha_set_valid':True},
+                     {'owner_approved':True,'soc_min':5,'soc_max':95})
+  self.assertEqual(zero_bms['charge_ceiling_kw'],0)
+  self.assertEqual(zero_bms['peak_guard'],'EXPOSED_CAP_NOT_DEVICE_AUTHORITY')
+  self.assertTrue(all(row['charge_ac_kwh']==0 for d in zero_bms['decisions'] for row in d['schedule']))
+
+
 
 if __name__=='__main__':unittest.main()
