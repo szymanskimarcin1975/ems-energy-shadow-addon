@@ -104,6 +104,17 @@ class ApprovalTests(unittest.TestCase):
   self.assertTrue(r['planning_soc_policy']['applied_to_simulation'])
   self.assertTrue(all(d['scenario_reserve_kwh']==0 for d in r['decisions']))
   self.assertFalse(r['control_enabled'])
+ def test_owner_5_95_planning_applied_without_bms_authority(self):
+  profile={'soc_operating_bounds':{'minimum':5,'maximum':95,'owner_approved':True}}
+  with patch('planning_runtime.load_profile',return_value=profile):r=plan(*fixture())
+  self.assertEqual(r['status'],'HYPOTHETICAL_SCHEDULE_READY')
+  self.assertEqual(r['battery']['simulated_min_soc_percent'],5)
+  self.assertEqual(r['battery']['simulated_max_soc_percent'],95)
+  self.assertTrue(r['planning_soc_policy']['applied_to_simulation'])
+  self.assertEqual(len(r['decisions']),4)
+  self.assertTrue(all(item['stored_kwh']<=9.2*.95+1e-9 for d in r['decisions'] for item in d['schedule']))
+  self.assertFalse(r['control_enabled'])
+
  def test_missing_profile_keeps_existing_scenario_and_no_authority(self):
   with patch('planning_runtime.load_profile',return_value=None):r=plan(*fixture())
   self.assertEqual(r['battery']['simulated_min_soc_percent'],30)
