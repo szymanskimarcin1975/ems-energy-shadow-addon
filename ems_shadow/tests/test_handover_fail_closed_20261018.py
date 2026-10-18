@@ -44,8 +44,8 @@ class HandoverFailClosedTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.ha = NoDeviceAccess()
         self.good_policy = Policy(
-            enabled=True, soc_min=30, soc_max=90,
-            soc_bounds_approved=True, handover_verified=True,
+            enabled=True, operating_soc_min=5, operating_soc_max=95,
+            soc_operating_range_approved=True, handover_verified=True,
             no_export_verified=True, fallback_verified=True,
         )
 
@@ -83,9 +83,9 @@ class HandoverFailClosedTests(unittest.TestCase):
         self.assertEqual(self.attempt(self.executor(Policy())), "DISABLED")
         self.assert_no_side_effects()
 
-    def test_planning_soc_bounds_are_not_safety_approval(self):
-        p = replace(self.good_policy, soc_min=0, soc_max=100,
-                    soc_bounds_approved=False)
+    def test_missing_operating_range_approval_blocks(self):
+        p = replace(self.good_policy, operating_soc_min=5, operating_soc_max=95,
+                    soc_operating_range_approved=False)
         self.assertEqual(self.attempt(self.executor(p)), "UNAPPROVED_SAFETY")
         self.assert_no_side_effects()
 
