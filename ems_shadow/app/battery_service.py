@@ -147,13 +147,21 @@ class BatteryService:
    return {'status':'UNKNOWN_LOCAL_RESERVATION_FAILED_NO_RETRY','writes_started':None,'physical_dispatch_supported':None,'automatic_retry':False}
   transport=getattr(self.ha,'shadow_dispatch',None)
   if transport is None:
-   outcome={'status':'REJECTED_NO_HARDWARE_WRITE','reason':'SHADOW_GATEWAY_TRANSPORT_UNAVAILABLE','writes_started':False,'physical_dispatch_supported':False}
+   # No correlated HA response means no trustworthy decision about the gateway.
+   # Persist UNKNOWN so this request_id cannot be replayed after restart.
+   outcome={'status':'UNKNOWN','reason':'SHADOW_GATEWAY_METHOD_UNAVAILABLE_NOT_SENT',
+            'writes_started':None,'physical_dispatch_supported':None,'not_sent':True}
   else:
    try:outcome=transport(intent,epoch)
    except Exception:outcome={'status':'UNKNOWN','reason':'GATEWAY_CALL_FAILED','writes_started':None,'physical_dispatch_supported':None}
-  accepted=(isinstance(outcome,dict) and outcome.get('status')=='REJECTED_NO_HARDWARE_WRITE' and outcome.get('writes_started') is False and outcome.get('physical_dispatch_supported') is False)
+  identity_ok=(isinstance(outcome,dict) and outcome.get('request_id')==identity['request_id'] and
+               outcome.get('plan_id')==identity['plan_id'] and
+               type(outcome.get('owner_epoch')) is int and outcome.get('owner_epoch')==epoch)
+  accepted=(identity_ok and outcome.get('status')=='REJECTED_NO_HARDWARE_WRITE' and
+            outcome.get('writes_started') is False and outcome.get('physical_dispatch_supported') is False)
   state='REJECTED' if accepted else 'UNKNOWN'
-  detail=str(outcome.get('reason',''))[:160] if isinstance(outcome,dict) else 'invalid_gateway_result'
+  detail=(str(outcome.get('reason',''))[:160] if isinstance(outcome,dict)
+          else 'invalid_gateway_result')
   try:
    self.db.execute('BEGIN IMMEDIATE')
    self.db.execute('UPDATE shadow_gateway_requests SET state=?,detail=?,updated_at=? WHERE request_id=? AND payload_sha256=? AND state=\'PENDING\'',(state,detail,self.clock().isoformat(),identity['request_id'],digest))
@@ -161,7 +169,11 @@ class BatteryService:
   except Exception:
    if self.db.in_transaction:self.db.execute('ROLLBACK')
    return {'status':'UNKNOWN_LOCAL_RESULT_COMMIT_FAILED_NO_RETRY','writes_started':None,'physical_dispatch_supported':None,'automatic_retry':False}
-  return {'status':state,'reason':detail,'writes_started':False if state=='REJECTED' else outcome.get('writes_started'),'physical_dispatch_supported':False if state=='REJECTED' else outcome.get('physical_dispatch_supported'),'request_id':identity['request_id'],'plan_id':identity['plan_id'],'owner_epoch':epoch,'automatic_retry':False}
+  return {'status':state,'reason':detail,
+          'writes_started':False if state=='REJECTED' else (outcome.get('writes_started') if isinstance(outcome,dict) else None),
+          'physical_dispatch_supported':False if state=='REJECTED' else (outcome.get('physical_dispatch_supported') if isinstance(outcome,dict) else None),
+          'request_id':identity['request_id'],'plan_id':identity['plan_id'],'owner_epoch':epoch,
+          'automatic_retry':False}
  def plan_still_current(self,config,intent):
   current=read_plan(config,self.clock(),self.local.state().get('epoch'))
   request=current.get('pending_request')

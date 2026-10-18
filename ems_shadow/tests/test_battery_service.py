@@ -96,6 +96,40 @@ class Tests(unittest.TestCase):
    p=Path(d)/'config';p.write_text('{')
    with patch('battery_service.CONFIG_PATH',p):self.assertEqual(read_config()['mode'],'READ_ONLY')
 
+class ShadowGatewayProbeTests(unittest.TestCase):
+ def test_missing_transport_is_unknown_persisted_and_never_replayed(self):
+  with tempfile.TemporaryDirectory() as d:
+   service=BatteryService(d,Local(),'synthetic',ha=TestHA())
+   intent=config('READ_ONLY')['pending_request']
+   first=service.shadow_gateway_probe(intent,2)
+   self.assertEqual(first['status'],'UNKNOWN')
+   self.assertEqual(first['reason'],'SHADOW_GATEWAY_METHOD_UNAVAILABLE_NOT_SENT')
+   self.assertFalse(first['automatic_retry'])
+   row=service.db.execute('SELECT state FROM shadow_gateway_requests WHERE request_id=?',(intent['request_id'],)).fetchone()
+   self.assertEqual(row[0],'UNKNOWN')
+   second=service.shadow_gateway_probe(intent,2)
+   self.assertEqual(second['status'],'DUPLICATE_UNKNOWN_NO_REPLAY')
+   self.assertEqual(service.ha.calls,[])
+   service.close()
+ def test_uncorrelated_rejection_is_unknown(self):
+  with tempfile.TemporaryDirectory() as d:
+   ha=TestHA();ha.shadow_dispatch=lambda intent,epoch:{'status':'REJECTED_NO_HARDWARE_WRITE','writes_started':False,'physical_dispatch_supported':False,'reason':'untrusted'}
+   service=BatteryService(d,Local(),'synthetic',ha=ha);intent=config('READ_ONLY')['pending_request']
+   result=service.shadow_gateway_probe(intent,2)
+   self.assertEqual(result['status'],'UNKNOWN')
+   row=service.db.execute('SELECT state FROM shadow_gateway_requests WHERE request_id=?',(intent['request_id'],)).fetchone()
+   self.assertEqual(row[0],'UNKNOWN');service.close()
+ def test_only_correlated_explicit_nonactuating_rejection_is_rejected(self):
+  with tempfile.TemporaryDirectory() as d:
+   ha=TestHA()
+   def reject(intent,epoch):
+    return {'status':'REJECTED_NO_HARDWARE_WRITE','writes_started':False,'physical_dispatch_supported':False,
+      'request_id':intent['request_id'],'plan_id':intent['plan_id'],'owner_epoch':epoch,'reason':'explicit_fence'}
+   ha.shadow_dispatch=reject;service=BatteryService(d,Local(),'synthetic',ha=ha);intent=config('READ_ONLY')['pending_request']
+   result=service.shadow_gateway_probe(intent,2)
+   self.assertEqual(result['status'],'REJECTED')
+   self.assertFalse(result['writes_started']);service.close()
+
 class DeadlineTests(unittest.TestCase):
  def test_expired_transport_deadline_makes_no_request(self):
   from battery_executor import SupervisorHA

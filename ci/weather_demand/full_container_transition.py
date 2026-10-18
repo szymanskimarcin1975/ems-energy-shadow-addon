@@ -37,8 +37,35 @@ with tempfile.TemporaryDirectory() as td:
             assert r['sources_digest']==digest and r['ledger_id']=='synthetic_ci'
             previous=r['samples'];before=time.monotonic()
             docker('stop','--time','30',app)
-            assert time.monotonic()-before<30
-            assert docker('inspect','--format','{{.State.ExitCode}}',app).strip()=='0'
+            elapsed=time.monotonic()-before
+            assert elapsed<30,phase+'_shutdown_budget_exceeded'
+            exit_code=int(docker('inspect','--format','{{.State.ExitCode}}',app).strip())
+            logs=subprocess.run(['docker','logs',app],capture_output=True,text=True,timeout=10)
+            combined=logs.stdout+'\\n'+logs.stderr
+            shutdown=None
+            for line in combined.splitlines():
+                try:
+                    row=json.loads(line)
+                    if row.get('component')=='observation_shutdown':shutdown=row
+                except (TypeError,ValueError):
+                    continue
+            clean=(isinstance(shutdown,dict) and shutdown.get('state')=='STOPPED' and
+                   shutdown.get('unconfirmed')==[])
+            # The pinned baseline intentionally propagates its child SIGTERM
+            # status (SystemExit(-15) => container status 241). Accept only that
+            # exact legacy signature with clean shutdown evidence. Candidate EMS2
+            # must normalize intentional SIGTERM to exit 0; other errors fail.
+            expected_legacy_sigterm=(phase in ('baseline','rollback') and exit_code==241 and clean)
+            assert exit_code==0 or expected_legacy_sigterm,(
+                phase+'_unexpected_exit:'+str(exit_code)+
+                ';shutdown='+json.dumps(shutdown,sort_keys=True)+
+                ';stderr='+logs.stderr[-1200:])
+            assert clean,phase+'_shutdown_not_confirmed:'+json.dumps(shutdown,sort_keys=True)
+            if phase=='candidate':
+                assert exit_code==0,'candidate_exit_not_zero:'+str(exit_code)
+            print('container_stop_result',json.dumps({'phase':phase,'exit_code':exit_code,
+                  'elapsed_seconds':round(elapsed,3),'clean_shutdown':clean,
+                  'legacy_sigterm_normalized_for_test':expected_legacy_sigterm}),flush=True)
             docker('rm',app)
             assert (data/'options.json').read_bytes()==original
             for db in data.rglob('*.sqlite'):
