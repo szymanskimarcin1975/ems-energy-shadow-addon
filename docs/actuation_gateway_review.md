@@ -60,26 +60,23 @@ https://github.com/WillCodeForCats/solaredge-modbus-multi/tree/v4.0.4
 - Existing entity controls are implemented by `select.py::StorageCommandMode`
   and `number.py::StorageChargeLimit/StorageDischargeLimit/StorageCommandTimeout`.
   Modes from upstream: PV charge=2, solar+grid=3, minimize import=5, self use=7.
-- **New concrete transport blocker:** `hub.py::async_write_with_retry` retries
-  device writes (`RetrySettings.RequestRetries`). The candidate refuses physical
-  use when retries != 1. A single HA service call is not proof of one Modbus
-  write. No monkey-patching or changing the installed integration is proposed.
+- v4.0.4 retries uncertain writes three times. The .40 follow-up provides an
+  offline, exact-source companion patch scoped to an explicit entry allowlist and
+  StorageControl only. It pins the lower transport and checks its capability.
+  See [installation candidate and hardware protocol](installation_candidate_40.md).
 
-## STOP and fallback: deliberately not fabricated
+## STOP and fallback
 
-HOLD only refrains from a new plan command. `stop_command` is a separate one-shot
-attempt, journaled before transport. Only an independently commissioned stop
-procedure can request `Maximize Self Consumption`. That select readback is not
-proof that an earlier command expired. Current v4.0.4 has no correlated
-termination observer in this adapter. Preflight refuses the first command while
-that observer is absent, even if configuration contains a claimed proof: `confirm_termination` explicitly returns
-false. UNKNOWN stays blocked across restarts and repeated STOP does not retry.
+HOLD never cancels an active command. The connected .40 observer watches the
+reviewed command7 -> control1 local-autoconsumption procedure after one durable
+STOP attempt. Two complete post-write polls are required; HA ACK, mode7 alone and
+elapsed3600s are insufficient. A device-specific commissioning witness is still
+required before ACTIVE; synthetic tests never create such evidence.
 
-Consequently **this candidate cannot yet complete an actual handover/rollback**
-without the missing device termination evidence/observer. The software test uses
-an injected simulated device observer and is not a physical fallback result.
-Emergency latching blocks new commands and attempts a verified stop when possible;
-it does not claim a physical emergency stop where that cannot be confirmed.
+UNKNOWN remains blocked across restart and repeated STOP cannot retry. Software
+observation establishes local-authority readback under a commissioned procedure,
+not physical proof of timer expiry or transient battery no-export. See the .40
+protocol for fast measurements, abort criteria and independent code recovery.
 
 ## Before any installation / first hardware test
 
@@ -88,8 +85,8 @@ it does not claim a physical emergency stop where that cannot be confirmed.
 2. Confirm entity bindings and a successful complete Modbus read of M1/B1, with
    explicit read window, latency and current BMS limits. Do not infer freshness
    from a repeated template event or `last_changed` alone.
-3. Resolve integration-level write retry behavior through a supported reviewed
-   implementation. Do not disable retries by monkey-patching vendor code.
+3. Review the pinned, entry-scoped companion and transport CI evidence. Its
+   installation is separate from the default READ_ONLY addon update.
 4. Inventory/fence all actual writers including direct external clients. Record
    quiescence and confirm end of the old command after quiescence. Merely waiting
    3600 seconds, seeing SOC 100%, mode 7 or 0 W is not termination proof.

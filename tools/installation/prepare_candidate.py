@@ -61,6 +61,10 @@ def build(source, output, root):
     prefix = 'custom_components/solaredge_modbus_multi/'
     archive(output/'solaredge-4.0.4-recovery.zip', {prefix+k:v for k,v in originals.items()})
     archive(output/'solaredge-4.0.4-ems.1-review.zip', {prefix+k:v for k,v in (originals|overrides).items()})
+    addon = root/'ems_shadow'
+    archive(output/'ems-shadow-0.1.4-observation.40-source.zip',
+        {'ems_shadow/'+p.relative_to(addon).as_posix():p.read_bytes()
+         for p in addon.rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc'})
     gateway = root/'custom_components/ems_epoch_gateway'
     archive(output/'ems-epoch-gateway-0.2.0-rc.1.zip',
         {'custom_components/ems_epoch_gateway/'+p.relative_to(gateway).as_posix():p.read_bytes()

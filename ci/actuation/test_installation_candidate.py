@@ -13,12 +13,13 @@ from types import SimpleNamespace as NS
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT/'ems_shadow/tests'))
-from test_actuation_candidate import AdapterTests, Adapter
+import test_actuation_candidate as fixtures
+Adapter=fixtures.Adapter
 spec=importlib.util.spec_from_file_location('package_builder',ROOT/'tools/installation/prepare_candidate.py')
 builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
 
 
-class StopWitnessTests(AdapterTests):
+class StopWitnessTests(fixtures.AdapterTests):
     # Inherit existing exact fixture; each new case drives actual adapter methods.
     async def test_default_observer_is_connected(self):
         self.assertTrue(callable(Adapter(self.adapter.hass,self.config,self.adapter.owner_status,self.adapter.registry).termination_observer))
@@ -64,6 +65,28 @@ class StopWitnessTests(AdapterTests):
 
     async def test_unknown_stop_request_does_not_infer_expiry(self):
         self.assertFalse((await self.adapter.observe_local_authority('unknown'))['active_command_ended'])
+
+    async def test_fault_export_and_remote_readback_do_not_confirm_stop(self):
+        from unittest.mock import patch
+        async def no_more_polls(awaitable, timeout):
+            awaitable.close()
+            raise TimeoutError()
+        for changes in ({'inverter_status':6}, {'bms_status':6},
+                        {'control':4}, {'b1_w':-250,'m1_w':100},
+                        {'poll_window_bound_s':120}, {'soc':float('nan')}):
+            now=time.time();self.adapter.stop_started['stop']=now-1
+            good=dict(self.adapter.sample,control=1,mode=7,default=7)
+            self.adapter.poll_history=[dict(good,poll_completed_at=now-.2),
+                dict(good,poll_completed_at=now-.1,**changes)]
+            with patch('asyncio.wait_for',no_more_polls):
+                result=await self.adapter.observe_local_authority('stop')
+            self.assertFalse(result['active_command_ended'],changes)
+
+    async def test_failed_poll_clears_termination_witness(self):
+        self.assertTrue(self.adapter.poll_history)
+        self.coordinator.last_update_success=False;self.adapter.capture_poll()
+        self.assertEqual(self.adapter.poll_history,[])
+
 
 
 class PackagingTests(unittest.IsolatedAsyncioTestCase):
