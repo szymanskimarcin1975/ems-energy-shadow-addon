@@ -105,3 +105,36 @@ class DeadlineTests(unittest.TestCase):
    with self.assertRaises(RuntimeError):ha.state('sensor.example_probe')
    network.assert_not_called()
 
+class ReadOnlyGatewayTransportTests(unittest.TestCase):
+ def test_shadow_dispatch_calls_only_ha_non_actuating_gateway_and_validates_identity(self):
+  import json
+  from unittest.mock import patch
+  from battery_executor import SupervisorHA
+  intent={'request_id':'req_1','plan_id':'a'*64,'option':'Charge from Solar Power','maximum_power_w':1000,'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=30)).isoformat()}
+  reply={'gateway_contract':'EMS2_COMPOUND_V28','status':'REJECTED','writes_started':False,'physical_dispatch_supported':False,'device_execution_confirmed':False,'request_id':'req_1','plan_id':'a'*64,'owner_epoch':0,'reason':'TRUSTED_PHYSICAL_FENCE_UNVERIFIED'}
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self):return json.dumps({'service_response':reply}).encode()
+  ha=SupervisorHA('synthetic-token')
+  with patch('urllib.request.urlopen',return_value=Response()) as post:
+   result=ha.shadow_dispatch(intent,0)
+  req=post.call_args.args[0]
+  self.assertTrue(req.full_url.endswith('/services/ems_epoch_gateway/dispatch?return_response'))
+  self.assertEqual(result['status'],'REJECTED_NO_HARDWARE_WRITE')
+  self.assertFalse(result['writes_started']);self.assertFalse(result['physical_dispatch_supported'])
+
+ def test_shadow_dispatch_mismatched_request_id_is_unknown(self):
+  import json
+  from unittest.mock import patch
+  from battery_executor import SupervisorHA
+  intent={'request_id':'req_1','plan_id':'a'*64,'option':'Charge from Solar Power','maximum_power_w':1000,'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=30)).isoformat()}
+  reply={'gateway_contract':'EMS2_COMPOUND_V28','status':'REJECTED','writes_started':False,'physical_dispatch_supported':False,'device_execution_confirmed':False,'request_id':'other','plan_id':'a'*64,'owner_epoch':0}
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self):return json.dumps({'service_response':reply}).encode()
+  with patch('urllib.request.urlopen',return_value=Response()):
+   result=SupervisorHA('synthetic-token').shadow_dispatch(intent,0)
+  self.assertEqual(result['status'],'UNKNOWN');self.assertEqual(result['reason'],'GATEWAY_CONTRACT_OR_IDENTITY_MISMATCH')
+
