@@ -2,6 +2,7 @@
 The boiler-only scope is not the building load. No PV measurement is inferred.
 """
 import hashlib,json,sqlite3,shutil
+from statistics import median
 from datetime import timedelta
 from pathlib import Path
 from soc_profile import load_profile,planning_policy
@@ -222,11 +223,11 @@ class Planner:
                     FROM household_forecasts WHERE source_entity=? AND target_at=?""",
                     (source_entity,target.isoformat())).fetchone()
                 if not forecast or stamp(forecast[0])>=target:continue
-                self.c.execute("""INSERT OR IGNORE INTO household_forecast_errors
+                cur=self.c.execute("""INSERT OR IGNORE INTO household_forecast_errors
                     VALUES(?,?,?,?,?,?,?,?,?)""",
                     (source_entity,target.isoformat(),forecast[0],observed.isoformat(),hour,day,
                      forecast[3],float(value),float(value)-forecast[3]))
-                count+=1
+                count+=max(cur.rowcount,0)
             except (KeyError,TypeError,ValueError,OverflowError):continue
         return count
     def error_biases(self,source_entity,at):
