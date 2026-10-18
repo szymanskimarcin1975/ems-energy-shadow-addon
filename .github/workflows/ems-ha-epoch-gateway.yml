@@ -1,0 +1,39 @@
+name: EMS HA epoch gateway isolated checks
+
+on:
+  push:
+    paths:
+      - 'custom_components/ems_epoch_gateway/**'
+      - 'ems_shadow/tests/test_ha_gateway_store_20261018.py'
+      - '.github/workflows/ems-ha-epoch-gateway.yml'
+  pull_request:
+    paths:
+      - 'custom_components/ems_epoch_gateway/**'
+      - 'ems_shadow/tests/test_ha_gateway_store_20261018.py'
+      - '.github/workflows/ems-ha-epoch-gateway.yml'
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python syntax and integration metadata
+        run: |
+          python -m compileall -q custom_components/ems_epoch_gateway
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('custom_components/ems_epoch_gateway')
+          data=json.loads((p/'manifest.json').read_text())
+          assert data['domain']=='ems_epoch_gateway'
+          assert data['config_flow'] is True
+          assert data['requirements']==[]
+          assert isinstance(data['codeowners'],list) and data['codeowners']
+          assert (p/'services.yaml').exists()
+          PY
+      - name: Persistent epoch and dedup tests (no HA, no device)
+        run: python -m unittest discover -s ems_shadow/tests -p test_ha_gateway_store_20261018.py -v
