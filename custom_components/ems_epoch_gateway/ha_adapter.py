@@ -25,7 +25,9 @@ CONTROL_SUFFIXES = {
 class HASolarEdgeAdapter:
     def __init__(self, hass, config, owner_status, registry, clock=time.time, termination_observer=None):
         self.hass, self.config, self.owner_status, self.registry, self.clock = hass, copy.deepcopy(config), owner_status, registry, clock
-        self.termination_observer = termination_observer
+        self.termination_observer = termination_observer or self.observe_local_authority
+        self.poll_history = []
+        self.stop_started = {}
         self.sample = None
         self.poll_event = asyncio.Event()
         self.entry_id = config['solaredge_entry_id']
@@ -89,8 +91,10 @@ class HASolarEdgeAdapter:
                 mode=c.command_mode, control=c.control_mode, default=c.default_mode,
                 timeout=c.command_timeout, charge=c.charge_limit, discharge=c.discharge_limit,
             )
+            self.poll_history = (self.poll_history + [copy.deepcopy(self.sample)])[-12:]
             self.poll_event.set()
         except Exception:
+            self.poll_history = []
             self.sample = None
             self.poll_event.set()
 
@@ -105,6 +109,9 @@ class HASolarEdgeAdapter:
             raise ValueError('DEVICE_TERMINATION_OBSERVER_UNAVAILABLE')
         if self.write_retry_count() != 1:
             raise ValueError('INTEGRATION_WRITE_RETRIES_UNSAFE')
+        stop = self.evidence('stop_procedure')
+        if stop.get('method') != 'remote_to_local_self_consumption' or stop.get('device_test_passed') is not True:
+            raise ValueError('STOP_METHOD_NOT_VERIFIED')
         self.evidence('fallback')
         self.evidence('battery_no_export')
         self.check_bindings()
@@ -139,10 +146,14 @@ class HASolarEdgeAdapter:
         if target not in ('EMS2', 'LEGACY'):
             raise ValueError('INVALID_OWNER')
 
-    @staticmethod
-    def write_retry_count():
-        from custom_components.solaredge_modbus_multi.const import RetrySettings
-        return RetrySettings.RequestRetries
+    def write_retry_count(self):
+        # Capability comes from the reviewed entry-scoped companion patch.
+        # Pin the transport inspected/tested for ambiguous-outcome no-retry.
+        from importlib.metadata import version
+        if (getattr(self.hub, 'ems_storage_single_attempt', False) is True and
+                version('modbus-connection') == '4.10.0' and version('tmodbus') == '0.6.1'):
+            return 1
+        return 0
 
     async def preflight(self, request):
         await self.verify_handover('EMS2')
@@ -253,7 +264,8 @@ class HASolarEdgeAdapter:
             raise ValueError('STOP_OWNER_NOT_EMS2')
         self.evidence('external_writer_fence')
         procedure = self.evidence('stop_procedure')
-        if procedure.get('method') != 'command_mode_maximize_self_consumption':
+        if (procedure.get('method') != 'remote_to_local_self_consumption' or
+                procedure.get('device_test_passed') is not True):
             raise ValueError('STOP_METHOD_NOT_VERIFIED')
         if self.write_retry_count() != 1:
             raise ValueError('INTEGRATION_WRITE_RETRIES_UNSAFE')
@@ -262,14 +274,53 @@ class HASolarEdgeAdapter:
         self.check_bindings()
 
     async def request_local_mode(self, request_id):
-        # A verified installation procedure may request this mode. A select ACK
-        # does not itself terminate/reconcile the preceding device command.
-        async with asyncio.timeout(10):
-            await self.hass.services.async_call('select', 'select_option',
-                {'entity_id': self.config['entities']['mode'], 'option': 'Maximize Self Consumption'}, blocking=True)
+        # Engine persisted stop_attempted BEFORE this method. Neither stage retries.
+        # Stage 1 prevents restoring an old forced direction if Remote is re-enabled.
+        # Stage 2 removes Remote authority; it does not prove timer expiry.
+        self.stop_started[request_id] = self.clock()
+        for role in ('mode', 'control'):
+            await self.verify_stop_procedure(request_id)
+            async with asyncio.timeout(10):
+                await self.hass.services.async_call('select', 'select_option',
+                    {'entity_id': self.config['entities'][role],
+                     'option': 'Maximize Self Consumption'}, blocking=True)
+
+    async def observe_local_authority(self, request_id):
+        started = self.stop_started.get(request_id)
+        if started is None:
+            return dict(request_id=request_id, active_command_ended=False,
+                        safe_local_mode_confirmed=False, reason='STOP_NOT_OBSERVED')
+        deadline = self.clock() + 30
+        # A complete poll is a bounded read window, never a device sample clock.
+        while self.clock() < deadline:
+            self.poll_event.clear()
+            samples = [s for s in self.poll_history if s['poll_completed_at'] > started]
+            if len(samples) >= 2:
+                a, b = samples[-2:]
+                valid = (self.coordinator.last_update_success is True and
+                    a['poll_completed_at'] < b['poll_completed_at'] and
+                    0 <= self.clock() - b['poll_completed_at'] <= 30 and
+                    all(s['control'] == 1 and s['mode'] == 7 and s['default'] == 7 and
+                        s['inverter_status'] in (4, 5, 8) and s['bms_status'] in (1, 3, 4, 7) and
+                        finite(s['poll_window_bound_s']) and 0 < s['poll_window_bound_s'] <= 5 and
+                        all(finite(s[k]) for k in ('b1_w', 'm1_w', 'soc')) and
+                        not (s['b1_w'] < 0 and s['m1_w'] > 0) for s in (a, b)))
+                if valid:
+                    # Commissioned method + post-write mode/control readback.
+                    # Never claim physical no-export or timeout from this witness.
+                    return dict(request_id=request_id, active_command_ended=True,
+                        safe_local_mode_confirmed=True, observed_at=b['poll_completed_at'],
+                        basis='REMOTE_AUTHORITY_REVOKED_TWO_COMPLETE_POLLS',
+                        timeout_expiry_confirmed=False, no_export_physically_proven=False,
+                        samples=[a, b])
+            try:
+                await asyncio.wait_for(self.poll_event.wait(), timeout=max(.001, deadline-self.clock()))
+            except TimeoutError:
+                break
+        return dict(request_id=request_id, active_command_ended=False,
+                    safe_local_mode_confirmed=False, reason='UNKNOWN_ACTIVE_COMMAND')
 
     async def confirm_termination(self, request_id):
-        # v4.0.4 has no correlated inactive-command status. Never manufacture one.
         if self.termination_observer is not None:
             return await self.termination_observer(request_id)
         return dict(request_id=request_id, active_command_ended=False,

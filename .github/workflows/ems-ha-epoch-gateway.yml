@@ -7,6 +7,8 @@ on:
       - 'ems_shadow/tests/test_ha_gateway_store_20261018.py'
       - 'ems_shadow/tests/test_actuation_candidate.py'
       - 'ci/actuation/**'
+      - 'tools/installation/**'
+      - 'blueprints/automation/ems2/**'
       - '.github/workflows/ems-ha-epoch-gateway.yml'
   pull_request:
     paths:
@@ -14,6 +16,8 @@ on:
       - 'ems_shadow/tests/test_ha_gateway_store_20261018.py'
       - 'ems_shadow/tests/test_actuation_candidate.py'
       - 'ci/actuation/**'
+      - 'tools/installation/**'
+      - 'blueprints/automation/ems2/**'
       - '.github/workflows/ems-ha-epoch-gateway.yml'
 
 permissions:
@@ -41,6 +45,28 @@ jobs:
           assert isinstance(data['codeowners'],list) and data['codeowners']
           assert (p/'services.yaml').exists()
           PY
+      - name: Exact upstream companion source (never installed on HA)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: WillCodeForCats/solaredge-modbus-multi
+          ref: d38d890887684ddd7938c4bce5223d387b24c6a7
+          path: upstream
+          persist-credentials: false
+      - name: Installation, single attempt and termination observer tests
+        env:
+          SOLAREDGE_SOURCE: upstream/custom_components/solaredge_modbus_multi
+        run: python ci/actuation/test_installation_candidate.py -v
+      - name: Build disabled installation and exact upstream recovery artifacts
+        run: |
+          python tools/installation/prepare_candidate.py --solaredge-source upstream/custom_components/solaredge_modbus_multi --output installation-candidate
+          cd installation-candidate
+          sha256sum -c SHA256SUMS
+      - name: Preserve review artifacts (not a release or production installation)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ems2-disabled-installation-candidate
+          path: installation-candidate/
+          retention-days: 30
       - name: Candidate actuator, fences, stop, restart and simulated device
         run: python -m unittest discover -s ems_shadow/tests -p test_actuation_candidate.py -v
       - name: Persistent epoch and dedup tests (no HA, no device)
@@ -60,3 +86,7 @@ jobs:
         run: python -m pip install homeassistant==2026.10.0
       - name: Actual HA service registration, default no-write and permissions
         run: python ci/actuation/ha_service_smoke.py
+      - name: Pinned transport no ambiguous write replay (loopback only)
+        run: |
+          python -m pip install 'modbus-connection[tmodbus]==4.10.0' tmodbus==0.6.1
+          python ci/actuation/transport_single_attempt.py

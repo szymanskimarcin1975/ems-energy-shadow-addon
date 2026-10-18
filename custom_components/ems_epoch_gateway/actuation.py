@@ -134,7 +134,10 @@ class ActuationGateway:
                 result.update(status='ENDED', termination_evidence=evidence)
                 await self.run_db(self.store.record, request_id, 'ENDED', current['writes_started'], result)
                 return dict(status='ENDED', active_command_canceled=True, legacy_resumed=False)
-            except Exception:
+            except Exception as exc:
+                result.update(status='UNKNOWN_ACTIVE_COMMAND', stop_reason=
+                    str(exc) if isinstance(exc, ValueError) else 'STOP_TRANSPORT_OR_OBSERVER_UNKNOWN')
+                await self.run_db(self.store.record, request_id, 'UNKNOWN', current['writes_started'], result)
                 return dict(status='UNKNOWN_ACTIVE_COMMAND', active_command_canceled=False, automatic_retry=False, legacy_resumed=False)
 
     async def monitor_once(self):

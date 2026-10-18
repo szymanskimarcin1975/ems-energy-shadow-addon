@@ -182,7 +182,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.hub.inverters[0].inverter_common=NS(C_Model='example_model',C_Version='example_fw',C_SerialNumber='example_inverter')
         self.hub.batteries[0].serial='example_battery'
         self.config['entities']={k:domain+'.example'+suffix for k,(domain,suffix) in suffixes.items()}
-        self.config['verified_evidence']={k:dict(verified=True,device=self.config['device'],reference='synthetic-only',verified_at=self.now-1,valid_until=self.now+60,minimum_c=0,maximum_c=40,inverter_command_inactive_confirmed=True) for k in ('external_writer_fence','previous_command_ended','fallback','battery_no_export','battery_temperature_envelope','stop_procedure')}
+        self.config['verified_evidence']={k:dict(verified=True,device=self.config['device'],reference='synthetic-only',verified_at=self.now-1,valid_until=self.now+60,minimum_c=0,maximum_c=40,inverter_command_inactive_confirmed=True,method='remote_to_local_self_consumption',device_test_passed=True) for k in ('external_writer_fence','previous_command_ended','fallback','battery_no_export','battery_temperature_envelope','stop_procedure')}
         self.states['automation.example_legacy']=NS(state='off',attributes={'current':0},last_changed=__import__('datetime').datetime.fromtimestamp(self.now-2,__import__('datetime').timezone.utc))
         self.states['input_select.example_owner']=NS(state='EMS2',attributes={})
         self.states['input_boolean.example_auth']=NS(state='on',attributes={})
