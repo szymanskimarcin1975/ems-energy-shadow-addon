@@ -61,6 +61,42 @@ class SupervisorHA:
             raise RuntimeError('gateway_outcome_unknown')
         return reply
 
+    def shadow_dispatch(self, intent, owner_epoch):
+        """Send a pending intent only to the HA gateway's non-actuating fence.
+
+        This is used in READ_ONLY to verify the vertical path. The installed
+        ems_epoch_gateway contract has no hardware transport and must return an
+        explicit REJECTED/writes_started=false response. Anything else is UNKNOWN.
+        """
+        try:
+            expiry=datetime.fromisoformat(intent['expires_at']).timestamp()
+            payload={'caller':'EMS2','operation':'dispatch',
+                     'request_id':intent['request_id'],'plan_id':intent['plan_id'],
+                     'owner_epoch':owner_epoch,'option':intent['option'],
+                     'power_w':intent['maximum_power_w'],'expires_at':expiry}
+            result=self._request('/services/ems_epoch_gateway/dispatch?return_response',payload)
+        except Exception:
+            return {'status':'UNKNOWN','reason':'GATEWAY_TRANSPORT_OR_RESPONSE_UNKNOWN',
+                    'writes_started':None,'physical_dispatch_supported':None}
+        reply=result.get('service_response') if isinstance(result,dict) else None
+        identity=(isinstance(reply,dict) and
+                  reply.get('request_id')==intent.get('request_id') and
+                  reply.get('plan_id')==intent.get('plan_id') and
+                  type(reply.get('owner_epoch')) is int and reply.get('owner_epoch')==owner_epoch)
+        if (identity and reply.get('status')=='REJECTED' and
+                reply.get('writes_started') is False and
+                reply.get('device_execution_confirmed') is False and
+                reply.get('physical_dispatch_supported') is False):
+            return {'status':'REJECTED_NO_HARDWARE_WRITE','reason':reply.get('reason'),
+                    'writes_started':False,'physical_dispatch_supported':False,
+                    'request_id':intent['request_id'],'plan_id':intent['plan_id'],
+                    'owner_epoch':owner_epoch}
+        return {'status':'UNKNOWN','reason':'GATEWAY_CONTRACT_OR_IDENTITY_MISMATCH',
+                'writes_started':reply.get('writes_started') if isinstance(reply,dict) else None,
+                'physical_dispatch_supported':reply.get('physical_dispatch_supported') if isinstance(reply,dict) else None,
+                'request_id':intent.get('request_id'),'plan_id':intent.get('plan_id'),
+                'owner_epoch':owner_epoch}
+
 @dataclass(frozen=True)
 class Policy:
     enabled: bool=False
