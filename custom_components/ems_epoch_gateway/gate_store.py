@@ -75,7 +75,6 @@ class EpochStore:
     def _connect(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(self.path, timeout=3, isolation_level=None)
-        db.execute("PRAGMA journal_mode=WAL")
         db.execute("PRAGMA synchronous=FULL")
         db.execute("PRAGMA busy_timeout=3000")
         return db
@@ -90,6 +89,7 @@ class EpochStore:
 
     def initialize(self):
         with closing(self._connect()) as db:
+            db.execute("PRAGMA journal_mode=WAL")
             db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS trusted_owner(
                 id INTEGER PRIMARY KEY CHECK(id=1),
