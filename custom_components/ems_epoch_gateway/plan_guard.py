@@ -13,7 +13,7 @@ def stamp(value):
     return t.astimezone(timezone.utc)
 
 
-def approved_request(report, config, request, now):
+def approved_request(report, config, request, now, monitoring=False):
     try:
         issued, valid = stamp(report['generated_at']), stamp(report['valid_until'])
         if not 0 <= (now - issued).total_seconds() <= 360 or not now < valid <= issued + timedelta(seconds=360):
@@ -62,14 +62,15 @@ def approved_request(report, config, request, now):
         plan_id = hashlib.sha256(json.dumps(basis,sort_keys=True,allow_nan=False).encode()).hexdigest()
         if request['request_id'] != request_id or request['plan_id'] != plan_id or request['option'] != option or not 0 < request['power_w'] <= watts <= 5000:
             raise ValueError('REQUEST_NOT_CURRENT_PLAN')
-        if not now.timestamp() < request['expires_at'] <= min(valid.timestamp(),end.timestamp()):
+        if not monitoring and not now.timestamp() < request['expires_at'] <= min(valid.timestamp(),end.timestamp()):
             raise ValueError('REQUEST_OUTLIVES_PLAN')
+        return min(valid.timestamp(), end.timestamp())
     except (KeyError, TypeError, OverflowError):
         raise ValueError('PLAN_INVALID') from None
 
 
-def read_approved_request(path, config, request, now):
+def read_approved_request(path, config, request, now, monitoring=False):
     path = Path(path)
     if path.stat().st_size > 524288:
         raise ValueError('PLAN_TOO_LARGE')
-    approved_request(json.loads(path.read_text()), config, request, now)
+    return approved_request(json.loads(path.read_text()), config, request, now, monitoring)

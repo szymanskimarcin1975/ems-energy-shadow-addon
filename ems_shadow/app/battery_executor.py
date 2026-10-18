@@ -3,6 +3,7 @@ External single-writer fencing and safe hardware fallback must be independently
 validated before setting enabled. Never disables or re-enables an old controller.
 """
 from contextlib import closing
+from pathlib import Path
 import fcntl
 import json
 import math
@@ -57,8 +58,22 @@ class SupervisorHA:
             raise RuntimeError('gateway_identity_or_outcome_unknown')
         if reply.get('status')=='REJECTED' and reply.get('writes_started') is False:
             raise GatewayRejected('gateway_confirmed_rejection_before_writes')
+        if reply.get('status')=='WAITING_CONFIRMATION' and reply.get('writes_started') is True and reply.get('owner')=='EMS2' and reply.get('option')==option:
+            applied=reply.get('applied_power_w')
+            if type(applied) not in (int,float) or not math.isfinite(applied) or not 0<applied<=power_w or reply.get('device_execution_confirmed') is not False:
+                raise RuntimeError('gateway_pending_power_or_confirmation_unknown')
+            return reply  # Durable HA reservation; only read outcome later, never redispatch.
         if reply.get('status')!='SERVICE_COMPLETED' or reply.get('device_execution_confirmed') is not True or reply.get('writes_started') is not True or reply.get('owner')!='EMS2' or reply.get('option')!=option:
             raise RuntimeError('gateway_outcome_unknown')
+        return reply
+
+    def command_status(self, request_id, plan_id, owner_epoch):
+        result=self._request('/services/ems_epoch_gateway/command_status?return_response', {'request_id':request_id})
+        reply=result.get('service_response') if isinstance(result,dict) else None
+        if (not isinstance(reply,dict) or reply.get('gateway_contract')!='EMS2_COMPOUND_V28' or
+            reply.get('request_id')!=request_id or reply.get('plan_id')!=plan_id or
+            type(reply.get('owner_epoch')) is not int or reply['owner_epoch']!=owner_epoch):
+            raise RuntimeError('gateway_status_identity_unknown')
         return reply
 
     def shadow_dispatch(self, intent, owner_epoch):
@@ -197,6 +212,35 @@ class Executor:
                 if not math.isfinite(value) or not 0<=value<=limit:return 'POWER_LIMIT_UNSAFE'
             except (KeyError,TypeError,ValueError):return 'POWER_LIMIT_INVALID'
         return self.bms_guard(option,now,setting_power=setting_power)
+    def reconcile_pending(self):
+        """Read HA outcomes for already reserved requests. No dispatch/owner writes."""
+        path=self.db
+        if not Path(path).exists():return []
+        outcomes=[]
+        with closing(sqlite3.connect(path,timeout=1)) as db:
+            tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {'commands','command_identity','command_observation'}<=tables:return []
+            rows=db.execute("SELECT c.id,c.status,i.plan_id,i.owner_epoch FROM commands c JOIN command_identity i ON i.request_id=c.id JOIN command_observation o ON o.request_id=c.id WHERE c.status IN ('WAITING','ACK')").fetchall()
+            for request_id,prior,plan_id,epoch in rows:
+                try:
+                    reply=self.ha.command_status(request_id,plan_id,epoch)
+                    state=reply.get('command_state')
+                    if state in ('WAITING_EFFECT','WAITING_STOP'):continue
+                    if state=='ACK_ACTIVE' and reply.get('device_execution_confirmed') is True:status='ACK'
+                    elif state=='ENDED' and reply.get('termination_evidence',{}).get('active_command_ended') is True:status='ENDED'
+                    else:status='UNKNOWN'
+                except Exception:status='UNKNOWN'
+                if prior==status:continue
+                from dispatch_lifecycle import finish
+                from dispatch_reservations import set_status
+                db.execute('BEGIN IMMEDIATE')
+                if db.execute('SELECT status FROM commands WHERE id=?',(request_id,)).fetchone()!=(prior,):
+                    db.rollback();continue
+                db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id))
+                finish(db,request_id,status,self.clock());set_status(db,request_id,status,self.clock())
+                db.commit();outcomes.append(dict(request_id=request_id,status=status))
+        return outcomes
+
     def execute(self,request_id,option,expires_at,now=None,*,maximum_power_w=None,intent_check=None,plan_id=None):
         if maximum_power_w is not None and (type(maximum_power_w) not in (int,float) or not math.isfinite(maximum_power_w) or not 0<maximum_power_w):return 'PLAN_POWER_INVALID'
         why=self.preflight()
@@ -216,6 +260,7 @@ class Executor:
                 db.execute('PRAGMA synchronous=FULL')
                 db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY, mode TEXT NOT NULL,status TEXT NOT NULL)')
                 db.execute('CREATE TABLE IF NOT EXISTS command_identity(request_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,owner_epoch INTEGER NOT NULL,requested_power_w REAL NOT NULL)')
+                db.execute('CREATE TABLE IF NOT EXISTS command_observation(request_id TEXT PRIMARY KEY)')
                 from dispatch_lifecycle import initialise,permit,begin,finish
                 from dispatch_reservations import initialise as reservations_init, inspect, reserve, set_status
                 initialise(db)
@@ -229,7 +274,7 @@ class Executor:
                     identity=db.execute('SELECT plan_id,owner_epoch,requested_power_w FROM command_identity WHERE request_id=?',(request_id,)).fetchone()
                     if identity is None:return 'UNKNOWN_IDENTITY_REQUIRES_RECONCILIATION'
                     return 'DUPLICATE_'+row[1] if row[0]==option and identity==(plan_id,self.expected_epoch,maximum_power_w) else 'REQUEST_CONFLICT'
-                if db.execute("SELECT 1 FROM commands WHERE status IN ('PENDING','UNKNOWN')").fetchone():
+                if db.execute("SELECT 1 FROM commands WHERE status IN ('PENDING','WAITING','UNKNOWN')").fetchone():
                     db.rollback();return 'UNKNOWN_REQUIRES_RECONCILIATION'
                 lifecycle=permit(db,request_id)
                 if lifecycle:
@@ -269,17 +314,21 @@ class Executor:
                     reply=self.ha.dispatch(self.mode,option,requested,request_id=request_id,expires_at=expires_at,plan_id=plan_id,owner_epoch=self.expected_epoch)
                     applied=reply['applied_power_w']
                     if type(applied) not in (int,float) or not math.isfinite(applied) or not 0<applied<=requested:raise RuntimeError('invalid_gateway_power_ack')
-                    s=self.ha.state(self.mode)
-                    stamp=datetime.fromisoformat(s['last_updated'])
-                    ack=s['state']==option and stamp.tzinfo is not None and issued_at<=stamp<=self.clock()
-                    if applied is not None:
-                        power=self.ha.state(self.powers[0 if option in self.CHARGES else 1])
-                        pt=datetime.fromisoformat(power['last_updated'])
-                        ack=ack and float(power['state'])==applied and pt.tzinfo is not None and issued_at<=pt<=self.clock()
-                    # An ownership or plan change after writes is UNKNOWN, never REJECTED.
-                    still_authorized=self.local_owner_guard() is False and self.ha.state(self.owner_entity).get('state')=='EMS2'
-                    still_current=intent_check is None or intent_check()
-                    status='ACK' if ack and still_authorized and still_current and self.clock()<expires_at else 'UNKNOWN'
+                    if reply.get('status')=='WAITING_CONFIRMATION':
+                        status='WAITING'
+                        db.execute('INSERT INTO command_observation VALUES(?)',(request_id,))
+                    else:
+                        s=self.ha.state(self.mode)
+                        stamp=datetime.fromisoformat(s['last_updated'])
+                        ack=s['state']==option and stamp.tzinfo is not None and issued_at<=stamp<=self.clock()
+                        if applied is not None:
+                            power=self.ha.state(self.powers[0 if option in self.CHARGES else 1])
+                            pt=datetime.fromisoformat(power['last_updated'])
+                            ack=ack and float(power['state'])==applied and pt.tzinfo is not None and issued_at<=pt<=self.clock()
+                        # An ownership or plan change after writes is UNKNOWN, never REJECTED.
+                        still_authorized=self.local_owner_guard() is False and self.ha.state(self.owner_entity).get('state')=='EMS2'
+                        still_current=intent_check is None or intent_check()
+                        status='ACK' if ack and still_authorized and still_current and self.clock()<expires_at else 'UNKNOWN'
                 except GatewayRejected:status='REJECTED'
                 except Exception:status='UNKNOWN'
                 db.execute('UPDATE commands SET status=? WHERE id=?',(status,request_id))

@@ -29,13 +29,13 @@ class StopWitnessTests(fixtures.AdapterTests):
         await self.adapter.request_local_mode('stop')
         self.assertEqual([x[2]['entity_id'] for x in self.calls],
                          [self.config['entities']['mode'],self.config['entities']['control']])
-        task=asyncio.create_task(self.adapter.confirm_termination('stop'))
-        await asyncio.sleep(0)
+        after=self.adapter.stop_started['stop']
+        self.assertTrue((await self.adapter.confirm_termination('stop'))['pending_confirmation'])
         c=self.hub.inverters[0].storage_control_data;c.control_mode=1;c.command_mode=7
-        self.now=time.time();self.adapter.capture_poll();await asyncio.sleep(0)
-        self.assertFalse(task.done())
-        self.now=time.time();self.adapter.capture_poll();await asyncio.sleep(.002)
-        result=await task
+        self.now=after+120;self.adapter.clock=lambda:self.now;self.adapter.capture_poll()
+        self.assertTrue((await self.adapter.confirm_termination('stop'))['pending_confirmation'])
+        self.now=after+240;self.adapter.capture_poll()
+        result=await self.adapter.confirm_termination('stop')
         self.assertTrue(result['active_command_ended'])
         self.assertFalse(result['timeout_expiry_confirmed'])
         self.assertFalse(result['no_export_physically_proven'])
@@ -43,9 +43,6 @@ class StopWitnessTests(fixtures.AdapterTests):
     async def test_command_mode_alone_never_proves_stop(self):
         self.adapter.stop_started['stop']=time.time()-1
         self.adapter.poll_history=[dict(self.adapter.sample,poll_completed_at=time.time())]*2
-        # Expire deterministic observer clock without waiting thirty seconds.
-        now=time.time();ticks=iter([now,now+31])
-        self.adapter.clock=lambda:next(ticks)
         result=await self.adapter.observe_local_authority('stop')
         self.assertFalse(result['active_command_ended'])
 
@@ -131,8 +128,8 @@ class PackagingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_disabled_installation_defaults(self):
         config=(ROOT/'ems_shadow/config.yaml').read_text()
-        self.assertIn('0.1.4-observation.40',config)
-        self.assertIn('io.hass.version="0.1.4-observation.40"',(ROOT/'ems_shadow/Dockerfile').read_text())
+        self.assertIn('0.1.4-observation.41',config)
+        self.assertIn('io.hass.version="0.1.4-observation.41"',(ROOT/'ems_shadow/Dockerfile').read_text())
         source=(ROOT/'custom_components/ems_epoch_gateway/__init__.py').read_text()
         self.assertIn('candidate.get("enabled") is True',source)
         self.assertNotIn('transition_owner(', (ROOT/'tools/installation/prepare_candidate.py').read_text())

@@ -27,7 +27,7 @@ class ControlStore(EpochStore):
             db.execute('CREATE TABLE IF NOT EXISTS control_owner_events(epoch INTEGER PRIMARY KEY,owner TEXT NOT NULL,previous_owner TEXT NOT NULL,at REAL NOT NULL,reference TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS control_commands(request_id TEXT PRIMARY KEY,payload_sha256 TEXT NOT NULL,owner_epoch INTEGER NOT NULL,state TEXT NOT NULL,writes_started INTEGER NOT NULL,result TEXT NOT NULL,updated_at REAL NOT NULL)')
             # A process that disappeared between reservation and completion cannot replay.
-            db.execute("UPDATE control_commands SET state='UNKNOWN' WHERE state IN ('RESERVED','SENDING')")
+            db.execute("UPDATE control_commands SET state='UNKNOWN' WHERE state IN ('RESERVED','SENDING','WAITING_EFFECT','WAITING_STOP')")
             db.execute('UPDATE trusted_owner SET physical_enabled=0 WHERE id=1')
             self.control_owner(db)
             db.commit()
@@ -102,15 +102,19 @@ class ControlStore(EpochStore):
             db.commit()
         return 'RESERVED'
 
-    def record(self, request_id, state, started, result):
-        if state not in ('SENDING', 'ACK_ACTIVE', 'UNKNOWN', 'REJECTED', 'ENDED'):
+    def record(self, request_id, state, started, result, expected_state=None):
+        if state not in ('SENDING', 'WAITING_EFFECT', 'WAITING_STOP', 'ACK_ACTIVE', 'UNKNOWN', 'REJECTED', 'ENDED'):
             raise ValueError('INVALID_COMMAND_STATE')
         payload = json.dumps(result, allow_nan=False, sort_keys=True)
         with closing(self._connect()) as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT state,writes_started FROM control_commands WHERE request_id=?', (request_id,)).fetchone()
+            row = db.execute('SELECT state,writes_started,result FROM control_commands WHERE request_id=?', (request_id,)).fetchone()
             if row is None or row[0] in ('REJECTED', 'ENDED'):
                 raise ValueError('REQUEST_NOT_ACTIVE')
+            if expected_state is not None and row[0] != expected_state:
+                raise ValueError('COMMAND_STATE_CHANGED')
+            if json.loads(row[2]).get('stop_attempted') and not result.get('stop_attempted'):
+                raise ValueError('STOP_ALREADY_RESERVED')
             if state == 'REJECTED' and (started or row[1]):
                 raise ValueError('CANNOT_REJECT_AFTER_WRITE')
             db.execute('UPDATE control_commands SET state=?,writes_started=?,result=?,updated_at=? WHERE request_id=?',
@@ -122,7 +126,7 @@ class ControlStore(EpochStore):
         with closing(self._connect()) as db:
             db.execute('BEGIN IMMEDIATE')
             row = db.execute('SELECT state,writes_started,result FROM control_commands WHERE request_id=?', (request_id,)).fetchone()
-            if row is None or row[0] not in ('ACK_ACTIVE', 'UNKNOWN'):
+            if row is None or row[0] not in ('ACK_ACTIVE', 'WAITING_EFFECT', 'UNKNOWN'):
                 return None
             result = json.loads(row[2])
             if result.get('stop_attempted'):

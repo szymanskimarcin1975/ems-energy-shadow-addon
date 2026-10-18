@@ -100,13 +100,13 @@ def inspect(db, *, request_id, plan_id, owner_epoch, option, power_w, expires_at
 
 
 def set_status(db, request_id, status, now):
-    allowed = {"PENDING", "ACK", "REJECTED", "UNKNOWN"}
+    allowed = {"PENDING", "WAITING", "ACK", "REJECTED", "UNKNOWN", "ENDED"}
     if status not in allowed:
         raise ValueError("invalid_reservation_status")
     row = db.execute(
         "SELECT status FROM dispatch_reservations WHERE request_id=?", (request_id,)
     ).fetchone()
-    if not row or row[0] not in {"RESERVED", "PENDING"}:
+    if not row or row[0] not in {"RESERVED", "PENDING", "WAITING", "ACK"} or (row[0]=="ACK" and status not in {"UNKNOWN","ENDED"}):
         raise ValueError("reservation_transition_invalid")
     db.execute(
         "UPDATE dispatch_reservations SET status=?,updated_at=? WHERE request_id=?",
