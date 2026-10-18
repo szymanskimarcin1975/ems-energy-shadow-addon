@@ -52,8 +52,8 @@ class HouseholdFeedbackTests(unittest.TestCase):
                   "min":100,"mean":500,"max":900}
         history={"unit":"W","source_entity":"sensor.example_house_power","retrieved_at":now.isoformat(),
                  "rows":[complete,complete,
-                         {"start":(start+timedelta(hours=1)).isoformat(),
-                          "end":(start+timedelta(hours=2)).isoformat(),"min":0,"mean":0,"max":0},
+                         {"start":(start+timedelta(hours=2)).isoformat(),
+                          "end":(start+timedelta(hours=3)).isoformat(),"min":0,"mean":0,"max":0},
                          {"start":(start-timedelta(hours=1)).isoformat(),
                           "end":start.isoformat(),"min":-1,"mean":0,"max":1}]}
         accepted=actual_hourly_rows(history,now.isoformat())
