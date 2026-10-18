@@ -21,9 +21,9 @@ function Remote([string]$Command) {
   if ($LASTEXITCODE -ne 0) {throw 'SSH command failed; do not restart Core after partial Apply'}
   return ($out -join "`n")
 }
-function Data($Object) {if ($null -ne $Object.data) {return $Object.data};return $Object}
+function Unwrap-Response($Object) {if ($null -ne $Object.data) {return $Object.data};return $Object}
 if ($Mode -ne 'Rollback') {
-$Backup=Data ((Remote "ha backups info $BackupSlug --raw-json")|ConvertFrom-Json)
+$Backup=Unwrap-Response ((Remote "ha backups info $BackupSlug --raw-json")|ConvertFrom-Json)
 if ($Backup.slug -ne $BackupSlug -or $Backup.type -ne 'full' -or !$Backup.homeassistant -or !($Backup.size -gt 0)) {
   throw 'Full completed backup metadata not confirmed; no component change'
 }
@@ -57,7 +57,7 @@ if ($Mode -eq 'Prepare') {
 $Plan=Get-Content (Join-Path $PSScriptRoot 'prepared.json') -Raw|ConvertFrom-Json
 if (!$BackupDirectory) {$BackupDirectory=$Plan.backup_directory}
 if ($BackupDirectory -notmatch '^/config/ems_companion_backups/[0-9]{8}T[0-9]{6}$') {throw 'Unsafe backup path'}
-$Core=Data ((Remote 'ha core info --raw-json')|ConvertFrom-Json)
+$Core=Unwrap-Response ((Remote 'ha core info --raw-json')|ConvertFrom-Json)
 if ($Core.state -ne 'stopped') {throw 'Core must already be stopped in an APPROVED maintenance window; script never stops it'}
 Remote "cd '$BackupDirectory/component'; sha256sum -c ../SHA256SUMS" | Write-Output
 if ($Mode -eq 'Apply') {
