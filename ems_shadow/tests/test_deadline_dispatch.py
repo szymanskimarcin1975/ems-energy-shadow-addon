@@ -64,3 +64,23 @@ class Tests(unittest.TestCase):
  def test_target_above_approved_ceiling_rejected(self):
   with self.assertRaisesRegex(ValueError,'invalid_target'):
    simulate_deadlines([self.slot(target=9.2)],9.2,5.,.46,5,5,.9,.9,maximum_kwh=8.74)
+
+
+ def test_soc_95_ceiling_and_soc_5_floor(self):
+  ceiling=9.2*.95;floor=9.2*.05
+  at_ceiling=simulate_deadlines([self.slot(.6368,pv=5,load=.2)],9.2,ceiling,floor,5,5,.9,.9,maximum_kwh=ceiling)
+  self.assertEqual(at_ceiling['schedule'][0]['charge_ac_kwh'],0)
+  self.assertLessEqual(at_ceiling['schedule'][0]['stored_kwh'],ceiling+1e-9)
+  at_floor=simulate_deadlines([self.slot(1.5109,load=2)],9.2,floor,floor,5,5,.9,.9,maximum_kwh=ceiling)
+  self.assertEqual(at_floor['schedule'][0]['discharge_ac_kwh'],0)
+  self.assertGreaterEqual(at_floor['schedule'][0]['stored_kwh'],floor-1e-9)
+
+ def test_normal_charge_and_discharge_within_5_95(self):
+  floor=9.2*.05;ceiling=9.2*.95
+  slots=[self.slot(.6368,pv=4,load=.5),
+         self.slot(.6368,load=.5,target=6.),
+         self.slot(1.5109,load=2.)]
+  r=simulate_deadlines(slots,9.2,4.6,floor,5,5,.9,.9,terminal_value_pln_per_kwh=.6368,maximum_kwh=ceiling)
+  self.assertGreater(sum(x['charge_ac_kwh'] for x in r['schedule']),0)
+  self.assertGreater(sum(x['discharge_ac_kwh'] for x in r['schedule']),0)
+  self.assertTrue(all(floor-1e-9<=x['stored_kwh']<=ceiling+1e-9 for x in r['schedule']))
