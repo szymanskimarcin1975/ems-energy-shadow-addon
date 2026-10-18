@@ -44,7 +44,14 @@ def build(report,config,now,epoch):
   # A rolling partial-hour revision has a stable UTC-hour command identity.
   identity={'hour':start.replace(minute=0,second=0,microsecond=0).isoformat(),'option':option,'maximum_power_w':watts,'epoch':epoch}
   request_id='plan_'+hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()[:48]
-  plan_id=hashlib.sha256(json.dumps(report,sort_keys=True,allow_nan=False).encode()).hexdigest()
+  # Bind the stable action to its schedule slot rather than the whole report.
+  # The planner refreshes generated_at/valid_until every cycle; hashing those
+  # fields made an unchanged request_id acquire a different plan_id on refresh,
+  # which correctly looked like an identity conflict at durable gateways.
+  plan_basis={'fingerprint':expected,'future_day_type':future,'pv_scenario':pv,
+              'slot_start':start.isoformat(),'slot_end':end.isoformat(),
+              'option':option,'maximum_power_w':watts,'epoch':epoch}
+  plan_id=hashlib.sha256(json.dumps(plan_basis,sort_keys=True,allow_nan=False).encode()).hexdigest()
   expires=min(now+timedelta(seconds=45),valid,end)
   intent=dict(request_id=request_id,option=option,maximum_power_w=watts,expires_at=expires.isoformat(),plan_id=plan_id,plan_generated_at=issued.isoformat(),plan_valid_until=valid.isoformat(),slot_start=start.isoformat(),slot_end=end.isoformat(),planning_config_fingerprint=expected)
   return dict(status='PLAN_REQUEST_PREPARED',execution_mode_supported=option in ('Charge from Solar Power','Charge from Solar Power and Grid','Discharge to Minimize Import'),power_setpoint_policy='COMPOUND_GATEWAY_CLAMPS_TO_INVERTER_AND_LIVE_BMS; zero limits and SOC ceiling remain rejected',hold_does_not_cancel_existing_command=True,pending_request=intent,advisory_only=report.get('whole_building_schedule_approved') is not True,scenario={'future_day_type':future,'pv_scenario':pv},ack_semantics='Fresh HA state readback, not physical energy execution')
