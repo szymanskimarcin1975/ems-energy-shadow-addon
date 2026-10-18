@@ -96,6 +96,40 @@ class Tests(unittest.TestCase):
    p=Path(d)/'config';p.write_text('{')
    with patch('battery_service.CONFIG_PATH',p):self.assertEqual(read_config()['mode'],'READ_ONLY')
 
+class ShadowGatewayProbeTests(unittest.TestCase):
+ def test_missing_transport_is_unknown_persisted_and_never_replayed(self):
+  with tempfile.TemporaryDirectory() as d:
+   service=BatteryService(d,Local(),'synthetic',ha=TestHA())
+   intent=config('READ_ONLY')['pending_request']
+   first=service.shadow_gateway_probe(intent,2)
+   self.assertEqual(first['status'],'UNKNOWN')
+   self.assertEqual(first['reason'],'SHADOW_GATEWAY_METHOD_UNAVAILABLE_NOT_SENT')
+   self.assertFalse(first['automatic_retry'])
+   row=service.db.execute('SELECT state FROM shadow_gateway_requests WHERE request_id=?',(intent['request_id'],)).fetchone()
+   self.assertEqual(row[0],'UNKNOWN')
+   second=service.shadow_gateway_probe(intent,2)
+   self.assertEqual(second['status'],'DUPLICATE_UNKNOWN_NO_REPLAY')
+   self.assertEqual(service.ha.calls,[])
+   service.close()
+ def test_uncorrelated_rejection_is_unknown(self):
+  with tempfile.TemporaryDirectory() as d:
+   ha=TestHA();ha.shadow_dispatch=lambda intent,epoch:{'status':'REJECTED_NO_HARDWARE_WRITE','writes_started':False,'physical_dispatch_supported':False,'reason':'untrusted'}
+   service=BatteryService(d,Local(),'synthetic',ha=ha);intent=config('READ_ONLY')['pending_request']
+   result=service.shadow_gateway_probe(intent,2)
+   self.assertEqual(result['status'],'UNKNOWN')
+   row=service.db.execute('SELECT state FROM shadow_gateway_requests WHERE request_id=?',(intent['request_id'],)).fetchone()
+   self.assertEqual(row[0],'UNKNOWN');service.close()
+ def test_only_correlated_explicit_nonactuating_rejection_is_rejected(self):
+  with tempfile.TemporaryDirectory() as d:
+   ha=TestHA()
+   def reject(intent,epoch):
+    return {'status':'REJECTED_NO_HARDWARE_WRITE','writes_started':False,'physical_dispatch_supported':False,
+      'request_id':intent['request_id'],'plan_id':intent['plan_id'],'owner_epoch':epoch,'reason':'explicit_fence'}
+   ha.shadow_dispatch=reject;service=BatteryService(d,Local(),'synthetic',ha=ha);intent=config('READ_ONLY')['pending_request']
+   result=service.shadow_gateway_probe(intent,2)
+   self.assertEqual(result['status'],'REJECTED')
+   self.assertFalse(result['writes_started']);service.close()
+
 class DeadlineTests(unittest.TestCase):
  def test_expired_transport_deadline_makes_no_request(self):
   from battery_executor import SupervisorHA
@@ -104,4 +138,37 @@ class DeadlineTests(unittest.TestCase):
   with patch('urllib.request.urlopen') as network:
    with self.assertRaises(RuntimeError):ha.state('sensor.example_probe')
    network.assert_not_called()
+
+class ReadOnlyGatewayTransportTests(unittest.TestCase):
+ def test_shadow_dispatch_calls_only_ha_non_actuating_gateway_and_validates_identity(self):
+  import json
+  from unittest.mock import patch
+  from battery_executor import SupervisorHA
+  intent={'request_id':'req_1','plan_id':'a'*64,'option':'Charge from Solar Power','maximum_power_w':1000,'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=30)).isoformat()}
+  reply={'gateway_contract':'EMS2_COMPOUND_V28','status':'REJECTED','writes_started':False,'physical_dispatch_supported':False,'device_execution_confirmed':False,'request_id':'req_1','plan_id':'a'*64,'owner_epoch':0,'reason':'TRUSTED_PHYSICAL_FENCE_UNVERIFIED'}
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self):return json.dumps({'service_response':reply}).encode()
+  ha=SupervisorHA('synthetic-token')
+  with patch('urllib.request.urlopen',return_value=Response()) as post:
+   result=ha.shadow_dispatch(intent,0)
+  req=post.call_args.args[0]
+  self.assertTrue(req.full_url.endswith('/services/ems_epoch_gateway/dispatch?return_response'))
+  self.assertEqual(result['status'],'REJECTED_NO_HARDWARE_WRITE')
+  self.assertFalse(result['writes_started']);self.assertFalse(result['physical_dispatch_supported'])
+
+ def test_shadow_dispatch_mismatched_request_id_is_unknown(self):
+  import json
+  from unittest.mock import patch
+  from battery_executor import SupervisorHA
+  intent={'request_id':'req_1','plan_id':'a'*64,'option':'Charge from Solar Power','maximum_power_w':1000,'expires_at':(datetime.now(timezone.utc)+timedelta(seconds=30)).isoformat()}
+  reply={'gateway_contract':'EMS2_COMPOUND_V28','status':'REJECTED','writes_started':False,'physical_dispatch_supported':False,'device_execution_confirmed':False,'request_id':'other','plan_id':'a'*64,'owner_epoch':0}
+  class Response:
+   def __enter__(self):return self
+   def __exit__(self,*args):return False
+   def read(self):return json.dumps({'service_response':reply}).encode()
+  with patch('urllib.request.urlopen',return_value=Response()):
+   result=SupervisorHA('synthetic-token').shadow_dispatch(intent,0)
+  self.assertEqual(result['status'],'UNKNOWN');self.assertEqual(result['reason'],'GATEWAY_CONTRACT_OR_IDENTITY_MISMATCH')
 

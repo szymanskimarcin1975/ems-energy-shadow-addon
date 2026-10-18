@@ -44,5 +44,12 @@ def main():
   result=shutdown_all(legacy,guards,publisher,budget=22,term_already_sent={'legacy'} if legacy_term_sent else ())
   print(json.dumps({'component':'observation_shutdown',**result}),flush=True)
   for s,h in previous.items():signal.signal(s,h)
- return 70 if result['state']=='UNKNOWN' else (legacy.returncode or 0)
+ # SIGTERM is the intentional container shutdown path. Only normalize it
+ # after shutdown_all has confirmed every child stopped cleanly; unexpected
+ # child exits and any incomplete shutdown retain their nonzero status.
+ if result['state']=='UNKNOWN' or result.get('unconfirmed'):
+  return 70
+ if legacy.returncode == -signal.SIGTERM and legacy_term_sent and result['state']=='STOPPED':
+  return 0
+ return legacy.returncode or 0
 if __name__=='__main__':raise SystemExit(main())

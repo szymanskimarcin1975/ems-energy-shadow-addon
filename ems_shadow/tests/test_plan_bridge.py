@@ -24,6 +24,10 @@ class Tests(unittest.TestCase):
  def test_future_slot_not_executed_early(self):
   r=report();r['household_advisory']['decisions'][0]['schedule'][0]['valid_for']=(NOW+timedelta(hours=1)).isoformat();self.assertEqual(self.b(r)['status'],'NO_CURRENT_PLAN_SLOT')
  def test_duplicate_identity_not_new_per_poll(self):self.assertEqual(self.b()['pending_request']['request_id'],self.b(at=NOW+timedelta(seconds=1))['pending_request']['request_id'])
+ def test_logical_plan_identity_stable_across_report_refresh(self):
+  first=self.b(report(NOW));refreshed=self.b(report(NOW+timedelta(seconds=20)),NOW+timedelta(seconds=20))
+  self.assertEqual(first['pending_request']['request_id'],refreshed['pending_request']['request_id'])
+  self.assertEqual(first['pending_request']['plan_id'],refreshed['pending_request']['plan_id'])
  def test_epoch_changes_request_identity(self):self.assertNotEqual(self.b()['pending_request']['request_id'],build(report(),CFG,NOW,3)['pending_request']['request_id'])
  def test_export_forbidden(self):
   r=report(option='discharge');r['household_advisory']['decisions'][0]['schedule'][0]['discharge_ac_kwh']=6;self.assertEqual(self.b(r)['status'],'PLAN_BATTERY_EXPORT_FORBIDDEN')
@@ -42,10 +46,11 @@ class Tests(unittest.TestCase):
 class FullPath(unittest.TestCase):
  def setUp(self):
   from battery_service import BatteryService
+  from test_battery_service import Local
   from test_battery_service import TestHA,Local,config,PROFILE
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.path=Path(self.tmp.name)/'plan.yaml';self.now=datetime.now(timezone.utc)
   class API(TestHA):
-   def __init__(api):super().__init__();api.returned='Charge from Solar Power';api.remote=5000;api.fault='I_STATUS_MPPT'
+   def __init__(api):super().__init__();api.returned='Charge from Solar Power';api.remote=5000;api.fault='I_STATUS_MPPT';api.shadow_calls=[]
    def current_states(api,ids):
     ids=list(ids)
     if set(ids)=={'sensor.example_inverter','sensor.example_vendor'}:
@@ -60,6 +65,9 @@ class FullPath(unittest.TestCase):
     api.returned=o;super().record_dispatch(e,o,**kw)
    def dispatch(api,e,o,power_w,**kw):
     api.remote=power_w;api.select(e,o,**kw);return {'applied_power_w':power_w}
+   def shadow_dispatch(api,intent,epoch):
+    api.shadow_calls.append((dict(intent),epoch))
+    return {'status':'REJECTED_NO_HARDWARE_WRITE','reason':'TRUSTED_PHYSICAL_FENCE_UNVERIFIED','writes_started':False,'physical_dispatch_supported':False,'request_id':intent['request_id'],'plan_id':intent['plan_id'],'owner_epoch':epoch}
   self.ha=API();self.s=BatteryService(self.tmp.name,Local(),'synthetic',ha=self.ha);self.addCleanup(self.s.close)
   self.cfg=config();self.cfg['pending_request']=None;self.cfg['planner_bridge']=CFG;self.cfg['fault_sources']={'inverter_status':'sensor.example_inverter','vendor_status':'sensor.example_vendor'};self.profile=PROFILE
   for back in (240,120,0):
@@ -70,8 +78,17 @@ class FullPath(unittest.TestCase):
  def cycle(self):return self.s.cycle(self.cfg,self.profile)
  def test_request_gateway_executor_ack_dedup(self):
   a=self.cycle();self.assertEqual(a['effective_state'],'ACK');self.assertEqual(len(self.ha.calls),1);self.assertEqual(self.cycle()['effective_state'],'DUPLICATE_ACK');self.assertEqual(len(self.ha.calls),1)
- def test_readonly_prepares_pending_without_actuation(self):
-  self.cfg['mode']='READ_ONLY';r=self.cycle();self.assertIsNotNone(r['planner_bridge']['pending_request']);self.assertEqual(r['effective_state'],'READ_ONLY');self.assertEqual(self.ha.calls,[])
+ def test_readonly_plan_reaches_non_actuating_ha_gateway_once(self):
+  self.cfg['mode']='READ_ONLY';r=self.cycle();self.assertIsNotNone(r['planner_bridge']['pending_request']);self.assertEqual(r['effective_state'],'SHADOW_GATEWAY_REJECTED');self.assertEqual(r['shadow_gateway']['status'],'REJECTED');self.assertFalse(r['shadow_gateway']['writes_started']);self.assertEqual(self.ha.calls,[]);self.assertEqual(len(self.ha.shadow_calls),1)
+  again=self.cycle();self.assertEqual(again['shadow_gateway']['status'],'DUPLICATE_REJECTED_NO_REPLAY');self.assertEqual(len(self.ha.shadow_calls),1);self.assertEqual(self.ha.calls,[])
+ def test_readonly_unknown_gateway_result_is_not_replayed_after_restart(self):
+  from battery_service import BatteryService
+  from test_battery_service import Local
+  self.cfg['mode']='READ_ONLY';self.ha.shadow_calls=[]
+  self.ha.shadow_dispatch=lambda intent,epoch: (self.ha.shadow_calls.append((intent,epoch)) or {'status':'UNKNOWN','reason':'timeout','writes_started':None,'physical_dispatch_supported':None})
+  self.assertEqual(self.cycle()['shadow_gateway']['status'],'UNKNOWN');self.assertEqual(len(self.ha.shadow_calls),1);self.s.close()
+  self.s=BatteryService(self.tmp.name,Local(),'synthetic',ha=self.ha);self.addCleanup(self.s.close)
+  self.assertEqual(self.cycle()['shadow_gateway']['status'],'DUPLICATE_UNKNOWN_NO_REPLAY');self.assertEqual(len(self.ha.shadow_calls),1);self.assertEqual(self.ha.calls,[])
  def test_soc_100_rejected(self):
   self.ha.soc=100;self.assertEqual(self.cycle()['effective_state'],'SOC_CEILING');self.assertEqual(self.ha.calls,[])
  def test_bms_zero_rejected(self):

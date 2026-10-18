@@ -1,7 +1,7 @@
 """Scheduled battery executor. READ_ONLY by default; no authority from a report.
 Hardware fallback and no-export protection require separate, expiring evidence.
 """
-import json,math,sqlite3,time
+import hashlib,json,math,sqlite3,time
 from pathlib import Path
 from datetime import datetime,timezone
 from battery_executor import Executor,Policy,SupervisorHA
@@ -55,6 +55,9 @@ class BatteryService:
    self.db.execute('PRAGMA journal_mode=WAL');self.db.execute('PRAGMA synchronous=FULL')
    self.db.execute('CREATE TABLE IF NOT EXISTS commands(id TEXT PRIMARY KEY,mode TEXT NOT NULL,status TEXT NOT NULL)')
    self.db.execute('CREATE TABLE IF NOT EXISTS runtime(id INTEGER PRIMARY KEY CHECK(id=1),cycles INTEGER NOT NULL,last_result TEXT NOT NULL)')
+   self.db.execute("""CREATE TABLE IF NOT EXISTS shadow_gateway_requests(
+    request_id TEXT PRIMARY KEY,payload_sha256 TEXT NOT NULL,state TEXT NOT NULL
+    CHECK(state IN ('PENDING','REJECTED','UNKNOWN')),detail TEXT NOT NULL,updated_at TEXT NOT NULL)""")
    self.db.execute("INSERT OR IGNORE INTO runtime VALUES(1,0,'INITIALIZED')")
    self.fault_guard=FaultGuard(self.db)
    self.planner_journal=Journal(self.db)
@@ -99,7 +102,15 @@ class BatteryService:
   intent=bridge.get('pending_request') if bridge_config.get('enabled') is True else config.get('pending_request')
   if bridge_config.get('enabled') is True and config.get('pending_request') is not None:
    enabled=False;result='MANUAL_AND_PLANNER_REQUEST_CONFLICT'
-  # READ_ONLY does not consume requests, fetch actuator state, or call services.
+  # READ_ONLY never enters the actuator transport. A pending plan may be sent
+  # only to the gateway's explicitly non-actuating rejection endpoint below.
+  # The one exception is the explicit non-actuating HA gateway fence: it
+  # accepts a planner intent only to durably reject it, proving the SHADOW
+  # vertical path without entering the device command transport.
+  shadow_gateway={'status':'NOT_APPLICABLE','writes_started':False,'physical_dispatch_supported':False}
+  if mode=='READ_ONLY' and bridge_config.get('enabled') is True and isinstance(intent,dict):
+   shadow_gateway=self.shadow_gateway_probe(intent,config.get('expected_epoch'))
+   result='SHADOW_GATEWAY_'+shadow_gateway['status']
   if enabled:
    preflight=self.executor.preflight()
    if preflight:result=preflight;enabled=False
@@ -111,7 +122,58 @@ class BatteryService:
   self.db.execute('UPDATE runtime SET cycles=cycles+1,last_result=? WHERE id=1',(result,))
   cycles=self.db.execute('SELECT cycles FROM runtime WHERE id=1').fetchone()[0]
   command_statuses=dict(self.db.execute('SELECT status,COUNT(*) FROM commands GROUP BY status'))
-  return {'command_lifecycle':lifecycle_state(self.db),'hold':lifecycle_hold(self.db,self.clock(),bridge['status']) if bridge.get('pending_request') is None else None,'planner_bridge':bridge,'fault_quality':fault_quality,'fault_recovery':dict(self.fault_guard.record),'telemetry_quality':telemetry_quality,'telemetry_age_limit_seconds':180,'telemetry_skew_limit_seconds':5,'new_command_block_does_not_cancel_active_command':True,'command_status_counts':command_statuses,'commands_ha_acknowledged':command_statuses.get('ACK',0),'delivery_uncertain':any(command_statuses.get(k,0) for k in ('PENDING','UNKNOWN')),'module':'battery_service','executor_initialized':True,'transport':'HA_QUEUED_COMMAND_GATEWAY','requested_mode':mode,'effective_state':result,'safety_reasons':reasons,'operational_parameters':expected,'planning_soc':planning,'safety_soc_bounds':bounds,'cycles':cycles,'pending_request_present':isinstance(intent,dict),'actuation_policy_enabled':enabled,'device_execution_confirmed':False,'ack_semantics':'ACK means new HA command state readback, not physical completion','automatic_legacy_shutdown':False,'automatic_replay_after_unknown':False,'dispatch_contract':'EMS2_COMPOUND_V28','alternate_select_transport_available':False}
+  return {'command_lifecycle':lifecycle_state(self.db),'hold':lifecycle_hold(self.db,self.clock(),bridge['status']) if bridge.get('pending_request') is None else None,'planner_bridge':bridge,'shadow_gateway':shadow_gateway,'fault_quality':fault_quality,'fault_recovery':dict(self.fault_guard.record),'telemetry_quality':telemetry_quality,'telemetry_age_limit_seconds':180,'telemetry_skew_limit_seconds':5,'new_command_block_does_not_cancel_active_command':True,'command_status_counts':command_statuses,'commands_ha_acknowledged':command_statuses.get('ACK',0),'delivery_uncertain':any(command_statuses.get(k,0) for k in ('PENDING','UNKNOWN')),'module':'battery_service','executor_initialized':True,'transport':'HA_QUEUED_COMMAND_GATEWAY','requested_mode':mode,'effective_state':result,'safety_reasons':reasons,'operational_parameters':expected,'planning_soc':planning,'safety_soc_bounds':bounds,'cycles':cycles,'pending_request_present':isinstance(intent,dict),'actuation_policy_enabled':enabled,'device_execution_confirmed':False,'ack_semantics':'ACK means new HA command state readback, not physical completion','automatic_legacy_shutdown':False,'automatic_replay_after_unknown':False,'dispatch_contract':'EMS2_COMPOUND_V28','alternate_select_transport_available':False}
+ def shadow_gateway_probe(self,intent,epoch):
+  """One-shot READ_ONLY request to the installed no-hardware HA fence."""
+  try:
+   identity={k:intent[k] for k in ('request_id','plan_id','option','maximum_power_w','expires_at')}
+   if (not isinstance(identity['request_id'],str) or not isinstance(identity['plan_id'],str) or
+       type(epoch) is not int):raise ValueError('invalid_shadow_intent')
+   # Expiry is refreshed by the planner and is not the command identity. Bind
+   # the dedup key to the stable plan/action/power/epoch; never replay a prior
+   # pending or uncertain reservation even if its transport expiry changed.
+   digest_basis={k:identity[k] for k in ('request_id','plan_id','option','maximum_power_w')}
+   digest=hashlib.sha256(json.dumps({'intent':digest_basis,'owner_epoch':epoch},sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
+   self.db.execute('BEGIN IMMEDIATE')
+   prior=self.db.execute('SELECT payload_sha256,state,detail FROM shadow_gateway_requests WHERE request_id=?',(identity['request_id'],)).fetchone()
+   if prior:
+    self.db.execute('COMMIT')
+    if prior[0]!=digest:return {'status':'REQUEST_ID_CONFLICT_NO_REPLAY','writes_started':False,'physical_dispatch_supported':False,'automatic_retry':False}
+    return {'status':'DUPLICATE_'+prior[1]+'_NO_REPLAY','detail':prior[2],'writes_started':False if prior[1]=='REJECTED' else None,'physical_dispatch_supported':False if prior[1]=='REJECTED' else None,'automatic_retry':False}
+   self.db.execute('INSERT INTO shadow_gateway_requests VALUES(?,?,\'PENDING\',\'reserved_before_gateway\',?)',(identity['request_id'],digest,self.clock().isoformat()))
+   self.db.execute('COMMIT')
+  except Exception:
+   if self.db.in_transaction:self.db.execute('ROLLBACK')
+   return {'status':'UNKNOWN_LOCAL_RESERVATION_FAILED_NO_RETRY','writes_started':None,'physical_dispatch_supported':None,'automatic_retry':False}
+  transport=getattr(self.ha,'shadow_dispatch',None)
+  if transport is None:
+   # No correlated HA response means no trustworthy decision about the gateway.
+   # Persist UNKNOWN so this request_id cannot be replayed after restart.
+   outcome={'status':'UNKNOWN','reason':'SHADOW_GATEWAY_METHOD_UNAVAILABLE_NOT_SENT',
+            'writes_started':None,'physical_dispatch_supported':None,'not_sent':True}
+  else:
+   try:outcome=transport(intent,epoch)
+   except Exception:outcome={'status':'UNKNOWN','reason':'GATEWAY_CALL_FAILED','writes_started':None,'physical_dispatch_supported':None}
+  identity_ok=(isinstance(outcome,dict) and outcome.get('request_id')==identity['request_id'] and
+               outcome.get('plan_id')==identity['plan_id'] and
+               type(outcome.get('owner_epoch')) is int and outcome.get('owner_epoch')==epoch)
+  accepted=(identity_ok and outcome.get('status')=='REJECTED_NO_HARDWARE_WRITE' and
+            outcome.get('writes_started') is False and outcome.get('physical_dispatch_supported') is False)
+  state='REJECTED' if accepted else 'UNKNOWN'
+  detail=(str(outcome.get('reason',''))[:160] if isinstance(outcome,dict)
+          else 'invalid_gateway_result')
+  try:
+   self.db.execute('BEGIN IMMEDIATE')
+   self.db.execute('UPDATE shadow_gateway_requests SET state=?,detail=?,updated_at=? WHERE request_id=? AND payload_sha256=? AND state=\'PENDING\'',(state,detail,self.clock().isoformat(),identity['request_id'],digest))
+   self.db.execute('COMMIT')
+  except Exception:
+   if self.db.in_transaction:self.db.execute('ROLLBACK')
+   return {'status':'UNKNOWN_LOCAL_RESULT_COMMIT_FAILED_NO_RETRY','writes_started':None,'physical_dispatch_supported':None,'automatic_retry':False}
+  return {'status':state,'reason':detail,
+          'writes_started':False if state=='REJECTED' else (outcome.get('writes_started') if isinstance(outcome,dict) else None),
+          'physical_dispatch_supported':False if state=='REJECTED' else (outcome.get('physical_dispatch_supported') if isinstance(outcome,dict) else None),
+          'request_id':identity['request_id'],'plan_id':identity['plan_id'],'owner_epoch':epoch,
+          'automatic_retry':False}
  def plan_still_current(self,config,intent):
   current=read_plan(config,self.clock(),self.local.state().get('epoch'))
   request=current.get('pending_request')
