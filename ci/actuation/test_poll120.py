@@ -23,7 +23,7 @@ class SlowDevice(fixtures.Device):
         self.poll=0;self.stop_polls=[];self.failed=False
     async def preflight(self,req):
         if self.failed:raise ValueError('COMMUNICATION_LOST')
-        return dict(direction_limit_w=900,poll_completed_at=self.clock(),plan_valid_until=self.clock()+360)
+        return dict(direction_limit_w=getattr(self,'cap',900),poll_completed_at=self.clock(),plan_valid_until=self.clock()+360)
     monitor_preflight=preflight
     async def confirm_effect(self,req,power,*,after=None):
         if self.poll<=after:return dict(pending_confirmation=True)
@@ -99,6 +99,12 @@ class Poll120Tests(unittest.IsolatedAsyncioTestCase):
         await self.issue()
         for _ in range(5):self.assertEqual((await self.engine.command_status('test_request'))['status'],'WAITING_CONFIRMATION')
         self.assertEqual(len(self.device.calls),1)
+    async def test_dynamic_bms_cap_drop_stops_existing_command(self):
+        await self.issue();self.device.cap=100;self.t+=120;self.device.poll=self.t
+        await self.engine.monitor_once()
+        self.assertEqual(self.store.active('test_request')['state'],'WAITING_STOP')
+        self.assertEqual(self.device.calls[-1][0],'STOP')
+
     async def test_journal_cas_does_not_revive_stop(self):
         await self.issue();await self.engine.stop('test_request')
         with self.assertRaises(ValueError):self.store.record('test_request','ACK_ACTIVE',True,{},'WAITING_EFFECT')

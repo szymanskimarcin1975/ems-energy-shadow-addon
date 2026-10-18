@@ -213,6 +213,8 @@ class ActuationGateway:
                     raise ValueError('ACTIVE_PLAN_OR_DEVICE_LEASE_EXPIRED')
                 if getattr(self.adapter, 'deferred_confirmation', False):
                     sample = await self.adapter.monitor_preflight(request)
+                    if result['applied_power_w'] > sample['direction_limit_w']:
+                        raise ValueError('ACTIVE_POWER_EXCEEDS_CURRENT_BMS_OR_IMPORT_HEADROOM')
                     lease = sample.get('plan_valid_until')
                     if finite(lease):
                         updated_until = min(lease, result['device_until'])

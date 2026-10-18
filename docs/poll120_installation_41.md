@@ -123,6 +123,10 @@ competing writer, uncertain ACK, unexpected directional power>200W for this100W
 test, or any sampled M1 export while B1 discharges. Perform only the commissioned
 one-shot STOP; UNKNOWN requires independent local recovery, not an automatic
 controller swap. Do not change hardware safeguards or cut power as a software STOP.
+After confirmed local return, reconcile/restore recorded command timeout and power
+limits under the sole operator before any separately approved owner transition.
+Do not automatically re-enable LEGACY or restore Remote while an old directional
+command could become effective.
 
 ## What120s observations can and cannot establish
 

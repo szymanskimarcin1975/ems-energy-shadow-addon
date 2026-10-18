@@ -59,6 +59,9 @@ class SupervisorHA:
         if reply.get('status')=='REJECTED' and reply.get('writes_started') is False:
             raise GatewayRejected('gateway_confirmed_rejection_before_writes')
         if reply.get('status')=='WAITING_CONFIRMATION' and reply.get('writes_started') is True and reply.get('owner')=='EMS2' and reply.get('option')==option:
+            applied=reply.get('applied_power_w')
+            if type(applied) not in (int,float) or not math.isfinite(applied) or not 0<applied<=power_w or reply.get('device_execution_confirmed') is not False:
+                raise RuntimeError('gateway_pending_power_or_confirmation_unknown')
             return reply  # Durable HA reservation; only read outcome later, never redispatch.
         if reply.get('status')!='SERVICE_COMPLETED' or reply.get('device_execution_confirmed') is not True or reply.get('writes_started') is not True or reply.get('owner')!='EMS2' or reply.get('option')!=option:
             raise RuntimeError('gateway_outcome_unknown')
@@ -309,12 +312,12 @@ class Executor:
                     requested=math.floor(min(maximum_power_w,self.direction_ceiling_w,self.p.max_charge_w if option in self.CHARGES else self.p.max_discharge_w))
                     if requested<=0:raise GatewayRejected('zero_direction_limit_before_transport')
                     reply=self.ha.dispatch(self.mode,option,requested,request_id=request_id,expires_at=expires_at,plan_id=plan_id,owner_epoch=self.expected_epoch)
+                    applied=reply['applied_power_w']
+                    if type(applied) not in (int,float) or not math.isfinite(applied) or not 0<applied<=requested:raise RuntimeError('invalid_gateway_power_ack')
                     if reply.get('status')=='WAITING_CONFIRMATION':
                         status='WAITING'
                         db.execute('INSERT INTO command_observation VALUES(?)',(request_id,))
                     else:
-                        applied=reply['applied_power_w']
-                        if type(applied) not in (int,float) or not math.isfinite(applied) or not 0<applied<=requested:raise RuntimeError('invalid_gateway_power_ack')
                         s=self.ha.state(self.mode)
                         stamp=datetime.fromisoformat(s['last_updated'])
                         ack=s['state']==option and stamp.tzinfo is not None and issued_at<=stamp<=self.clock()

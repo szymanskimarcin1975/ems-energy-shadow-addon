@@ -264,6 +264,13 @@ class HASolarEdgeAdapter:
         if current['trusted_owner'] != 'EMS2':
             raise ValueError('STOP_OWNER_NOT_EMS2')
         self.evidence('external_writer_fence')
+        owner = self.hass.states.get(self.config['owner_entity'])
+        if owner is None or owner.state != 'EMS2':
+            raise ValueError('STOP_SHARED_OWNER_AMBIGUOUS')
+        for entity in self.config.get('legacy_writers', []):
+            state = self.hass.states.get(entity)
+            if state is None or state.state != 'off' or state.attributes.get('current') != 0:
+                raise ValueError('STOP_WRITER_CONFLICT')
         procedure = self.evidence('stop_procedure')
         if (procedure.get('method') != 'remote_to_local_self_consumption' or
                 procedure.get('device_test_passed') is not True):
