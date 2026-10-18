@@ -74,6 +74,10 @@ class HASolarEdgeAdapter:
             b, i, m, c = battery.battery_data, inverter.inverter_data, meter.meter_data, inverter.storage_control_data
             self.sample = dict(
                 poll_completed_at=t, poll_window_bound_s=self.hub.coordinator_timeout,
+                device=dict(model=inverter.inverter_common.C_Model,
+                            firmware=inverter.inverter_common.C_Version,
+                            inverter_serial=inverter.inverter_common.C_SerialNumber,
+                            battery_serial=battery.serial),
                 provenance='successful_complete_Modbus_read_not_device_sample_clock',
                 device_sample_time_known=False, soc=b.B_SOE, b1_w=b.B_DC_Power,
                 temperature_c=b.B_Temp_Average, bms_status=b.B_Status,
@@ -115,6 +119,22 @@ class HASolarEdgeAdapter:
             changed = getattr(state, 'last_changed', None)
             if changed is None or ended['verified_at'] < changed.timestamp():
                 raise ValueError('TERMINATION_EVIDENCE_PREDATES_WRITER_QUIESCENCE')
+        sample = self.sample
+        if sample is None or self.coordinator.last_update_success is not True:
+            raise ValueError('COMPLETE_MODBUS_POLL_UNCONFIRMED')
+        age = self.config.get('max_poll_age_s', 0)
+        if not finite(age) or not 0 < age <= 180 or not 0 <= self.clock() - sample['poll_completed_at'] <= age:
+            raise ValueError('MODBUS_POLL_STALE')
+        def firmware(value):
+            text = str(value)
+            return tuple(int(x) for x in text.split('.')) if all(x.isdecimal() for x in text.split('.')) else text
+        expected = self.config.get('device', {})
+        actual = sample.get('device', {})
+        if (not all(expected.get(k) and actual.get(k) == expected[k] for k in ('model','inverter_serial','battery_serial')) or
+                firmware(actual.get('firmware')) != firmware(expected.get('firmware'))):
+            raise ValueError('PHYSICAL_DEVICE_IDENTITY_MISMATCH')
+        if sample['inverter_status'] not in (4, 5, 8) or sample['bms_status'] not in (1, 3, 4, 7):
+            raise ValueError('FAULT_OR_BMS_STATUS_NOT_APPROVED')
         # This verifies configured HA writers only. External exclusion needs separate evidence.
         if target not in ('EMS2', 'LEGACY'):
             raise ValueError('INVALID_OWNER')

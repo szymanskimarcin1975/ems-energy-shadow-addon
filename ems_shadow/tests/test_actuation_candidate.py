@@ -177,8 +177,10 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.config=dict(physical_authorized=True,solaredge_entry_id='entry',inverter_unit_id=1,battery_id=1,meter_id=1,
                          owner_entity='input_select.example_owner',authorization_entity='input_boolean.example_auth',
                          legacy_writers=['automation.example_legacy'],max_poll_age_s=180,max_poll_window_s=5,
-                         import_margin_w=200,command_timeout_s=30,device=dict(model='example_model',firmware='example_fw'))
+                         import_margin_w=200,command_timeout_s=30,device=dict(model='example_model',firmware='example_fw',inverter_serial='example_inverter',battery_serial='example_battery'))
         suffixes=importlib.import_module(PKG+'.ha_adapter').CONTROL_SUFFIXES
+        self.hub.inverters[0].inverter_common=NS(C_Model='example_model',C_Version='example_fw',C_SerialNumber='example_inverter')
+        self.hub.batteries[0].serial='example_battery'
         self.config['entities']={k:domain+'.example'+suffix for k,(domain,suffix) in suffixes.items()}
         self.config['verified_evidence']={k:dict(verified=True,device=self.config['device'],reference='synthetic-only',verified_at=self.now-1,valid_until=self.now+60,minimum_c=0,maximum_c=40,inverter_command_inactive_confirmed=True) for k in ('external_writer_fence','previous_command_ended','fallback','battery_no_export','battery_temperature_envelope','stop_procedure')}
         self.states['automation.example_legacy']=NS(state='off',attributes={'current':0},last_changed=__import__('datetime').datetime.fromtimestamp(self.now-2,__import__('datetime').timezone.utc))
@@ -253,6 +255,12 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_termination_observer_blocks_before_writes(self):
         self.adapter.termination_observer=None
         with self.assertRaisesRegex(ValueError,'TERMINATION_OBSERVER_UNAVAILABLE'):
+            await self.adapter.preflight(request())
+        self.assertFalse(self.calls)
+
+    async def test_replaced_device_cannot_reuse_commissioning_evidence(self):
+        self.adapter.sample['device']['inverter_serial']='different_device'
+        with self.assertRaisesRegex(ValueError,'DEVICE_IDENTITY_MISMATCH'):
             await self.adapter.preflight(request())
         self.assertFalse(self.calls)
 
