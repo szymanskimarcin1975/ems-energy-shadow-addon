@@ -64,14 +64,13 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
         r['rating_quality']='HA_METADATA_SNAPSHOT_NOT_DYNAMIC_MEASUREMENT'
         r['rating_timestamps']={key:{k:states[config[key]].get(k) for k in ('last_reported','last_updated','last_changed')} for key in ('capacity_entity','charge_limit_entity','discharge_limit_entity')}
         if not 0<capacity<=30 or not 0<=soc<=100 or not 0<=charge<=15 or not 0<=discharge<=15:raise ValueError('outside_simulation_limits')
-        minimum=number(config['simulation_min_soc_percent'])
+        minimum=number(config['simulation_min_soc_percent']);maximum=100
         if approved_planning['owner_approved']:
-            if approved_planning['soc_max']!=100:raise ValueError('unsupported_planning_ceiling')
-            minimum=approved_planning['soc_min']
+            minimum=approved_planning['soc_min'];maximum=approved_planning['soc_max']
             r['planning_soc_policy']['applied_to_simulation']=True
         ce,de=number(config['simulation_charge_eff']),number(config['simulation_discharge_eff'])
-        if not 0<=minimum<=100:raise ValueError('invalid_simulation_floor')
-        r['battery']={'soc_percent':soc,'capacity_kwh':capacity,'simulated_min_soc_percent':minimum,
+        if not 0<=minimum<maximum<=100:raise ValueError('invalid_simulation_range')
+        r['battery']={'soc_percent':soc,'capacity_kwh':capacity,'simulated_min_soc_percent':minimum,'simulated_max_soc_percent':maximum,
                       'reserve_confirmed_for_control':False,'charge_eff_assumed':ce,'discharge_eff_assumed':de}
         price=config['working_rates_pln_kwh']
         if set(price)!= {'dolina','szczyt_przedpoludniowy','szczyt_popoludniowy'}:raise ValueError('missing_prices')
@@ -106,7 +105,7 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
                     times.append(dict(valid_for=t.isoformat(),tariff=zone,load_kwh=load,pv_kwh=solar_est))
                 # Input scope is explicitly boiler-only, not approval of site topology.
                 result=simulate(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,ce,de,
-                                topology_confirmed=True,step_kwh=.25)
+                                topology_confirmed=True,step_kwh=.25,maximum_kwh=capacity*maximum/100)
                 for entry,meta in zip(result['schedule'],times):entry.update(meta,reason='Minimise hypothetical import cost subject to scenario reserve, power and no battery export')
                 r['decisions'].append(dict(result,future_day_type=future_day_type,pv_scenario=pv_key,
                      scope='BOILER_ONLY_HYPOTHETICAL_PV_AND_BATTERY_ALLOCATION',not_full_building_dispatch=True))
@@ -127,7 +126,7 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
                     times.append({'valid_for':entry['valid_for'],'tariff':entry['tariff']})
                     slots.append(dict(load_kwh=candidate/1000,pv_kwh=entry['pv_kwh'],
                           price_pln_kwh=price[entry['tariff']],hours=1))
-                result=simulate(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,ce,de,topology_confirmed=True,step_kwh=.25)
+                result=simulate(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,ce,de,topology_confirmed=True,step_kwh=.25,maximum_kwh=capacity*maximum/100)
                 for entry,meta,slot in zip(result['schedule'],times,slots):
                     entry.update(meta,load_kwh=slot['load_kwh'],pv_kwh=slot['pv_kwh'],
                         reason='Conditional whole-site persistence scenario; not a validated building measurement or command')
