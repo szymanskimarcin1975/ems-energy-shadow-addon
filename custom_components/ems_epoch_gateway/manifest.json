@@ -8,5 +8,8 @@
   "config_flow": true,
   "iot_class": "local_push",
   "requirements": [],
-  "dependencies": []
+  "dependencies": [],
+  "codeowners": [
+    "@szymanskimarcin1975"
+  ]
 }
