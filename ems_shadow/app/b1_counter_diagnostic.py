@@ -27,7 +27,7 @@ def evaluate(previous, current, *, mean_abs_watts=None, min_elapsed_seconds=300,
                 return {"status":"INVALID_EVIDENCE"}
             deltas.append(b-a)
         if min(deltas) < -energy_tolerance_kwh:
-            return {"status":"COUNTER_DECREASED","elapsed_seconds":elapsed,"deltas_kwh":deltas}
+            return {"status":"COUNTER_DECREASED","elapsed_seconds":elapsed,"raw_deltas_kwh":deltas,"deltas_kwh":[None,None],"discontinuity":True,"usable_for_cost":False,"physical_reset_cause":"UNCONFIRMED"}
         if elapsed < min_elapsed_seconds:
             return {"status":"INSUFFICIENT_WINDOW","elapsed_seconds":elapsed}
         if max(abs(d) for d in deltas) <= energy_tolerance_kwh:

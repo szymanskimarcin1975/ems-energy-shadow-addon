@@ -28,7 +28,7 @@ class StopWitnessTests(fixtures.AdapterTests):
         self.adapter.termination_observer=self.adapter.observe_local_authority
         await self.adapter.request_local_mode('stop')
         self.assertEqual([x[2]['entity_id'] for x in self.calls],
-                         [self.config['entities']['mode'],self.config['entities']['control']])
+                         [self.config['entities']['control']])
         after=self.adapter.stop_started['stop']
         self.assertTrue((await self.adapter.confirm_termination('stop'))['pending_confirmation'])
         c=self.hub.inverters[0].storage_control_data;c.control_mode=1;c.command_mode=7
@@ -57,6 +57,7 @@ class StopWitnessTests(fixtures.AdapterTests):
             self.calls.append(data)
             if len(self.calls)==2:raise TimeoutError()
         self.adapter.hass.services.async_call=call
+        self.adapter.sample['mode']=2
         with self.assertRaises(TimeoutError):await self.adapter.request_local_mode('stop')
         self.assertEqual(len(self.calls),2)
 
@@ -128,8 +129,8 @@ class PackagingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_disabled_installation_defaults(self):
         config=(ROOT/'ems_shadow/config.yaml').read_text()
-        self.assertIn('0.1.4-observation.41',config)
-        self.assertIn('io.hass.version="0.1.4-observation.41"',(ROOT/'ems_shadow/Dockerfile').read_text())
+        self.assertIn('0.1.4-observation.42',config)
+        self.assertIn('io.hass.version="0.1.4-observation.42"',(ROOT/'ems_shadow/Dockerfile').read_text())
         source=(ROOT/'custom_components/ems_epoch_gateway/__init__.py').read_text()
         self.assertIn('candidate.get("enabled") is True',source)
         self.assertNotIn('transition_owner(', (ROOT/'tools/installation/prepare_candidate.py').read_text())

@@ -1,5 +1,5 @@
 name: EMS Energy SHADOW
-version: 0.1.4-observation.41
+version: 0.1.4-observation.42
 slug: ems_energy_shadow
 description: Read-only energy observation with a private SQLite ledger
 arch:

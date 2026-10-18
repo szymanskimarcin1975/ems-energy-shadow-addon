@@ -4,7 +4,7 @@ from datetime import datetime,timezone,timedelta
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'app/observation'))
 from plan_bridge import build,Journal
-NOW=datetime.now(timezone.utc)
+NOW=datetime(2026,10,18,12,15,tzinfo=timezone.utc)
 FP='a'*64
 CFG={'enabled':True,'expected_fingerprint':FP,'future_day_type':'workday','pv_scenario':'pv_estimate10'}
 def report(now=NOW,option='charge'):
@@ -28,6 +28,10 @@ class Tests(unittest.TestCase):
   first=self.b(report(NOW));refreshed=self.b(report(NOW+timedelta(seconds=20)),NOW+timedelta(seconds=20))
   self.assertEqual(first['pending_request']['request_id'],refreshed['pending_request']['request_id'])
   self.assertEqual(first['pending_request']['plan_id'],refreshed['pending_request']['plan_id'])
+ def test_refresh_across_hour_changes_slot_identity(self):
+  before=NOW.replace(minute=59,second=50);after=before+timedelta(seconds=20)
+  first=self.b(report(before),before);second=self.b(report(after),after)
+  self.assertNotEqual(first['pending_request']['request_id'],second['pending_request']['request_id'])
  def test_epoch_changes_request_identity(self):self.assertNotEqual(self.b()['pending_request']['request_id'],build(report(),CFG,NOW,3)['pending_request']['request_id'])
  def test_export_forbidden(self):
   r=report(option='discharge');r['household_advisory']['decisions'][0]['schedule'][0]['discharge_ac_kwh']=6;self.assertEqual(self.b(r)['status'],'PLAN_BATTERY_EXPORT_FORBIDDEN')

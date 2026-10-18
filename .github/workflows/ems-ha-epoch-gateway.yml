@@ -58,6 +58,11 @@ jobs:
         run: |
           python ci/actuation/test_installation_candidate.py -v
           python ci/actuation/test_poll120.py -v
+          python ci/actuation/test_wear_energy.py -v
+      - name: Windows installer syntax and SSH guard scenarios (mocked, no network)
+        env:
+          SOLAREDGE_SOURCE: upstream/custom_components/solaredge_modbus_multi
+        run: pwsh -NoProfile -File ci/actuation/test_installer.ps1
       - name: Build disabled installation and exact upstream recovery artifacts
         run: |
           python tools/installation/prepare_candidate.py --solaredge-source upstream/custom_components/solaredge_modbus_multi --output installation-candidate
