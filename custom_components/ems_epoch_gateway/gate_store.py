@@ -22,7 +22,7 @@ OPTIONS = {
 }
 REQUEST_RE = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 PLAN_RE = re.compile(r"[a-f0-9]{64}\Z")
-STOP_REASON_RE = re.compile(r"[A-Z][A-Z0-9_]{1,63}\\Z")
+STOP_REASON_RE = re.compile(r"[A-Z][A-Z0-9_]{1,63}\Z")
 
 
 def validate(request: dict, now: float | None = None) -> tuple[str, dict | None]:
