@@ -164,7 +164,8 @@ artifact per Windows policy before running it.
    script can safely manage a running Core without a state check.
 
 CI validates PowerShell syntax and exercises Prepare/independent-download hash
-verification plus live-Core/partial-backup refusals with MOCKED SSH. It is not a
+verification, real local filesystem Apply/Rollback, and live-Core/partial-backup
+refusals with MOCKED SSH and Supervisor. It is not a
 production SSH installation test. Actual on-server per-file backup has NOT been
 made by this agent because current MCP does not expose that filesystem.
 
