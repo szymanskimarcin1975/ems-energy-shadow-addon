@@ -24,23 +24,23 @@ class AdvisoryEconomics(unittest.TestCase):
    return [{'period_start':datetime(date[0],date[1],date[2],h,tzinfo=ZONE).isoformat(),
             'pv_estimate':0.,'pv_estimate10':0.} for h in range(24)]
   states={
-   'sensor.soc':reading(75,'%'),
-   'sensor.capacity':reading(9.2,'kWh'),
-   'sensor.charge':reading(5000,'W'),
-   'sensor.discharge':reading(5000,'W'),
-   'sensor.pv_updated':{'state':now_iso,'attributes':{},'last_reported':now_iso},
-   'sensor.pv_today':{'state':'0','attributes':{'detailedHourly':pv_day((2026,10,18))}},
-   'sensor.pv_tomorrow':{'state':'0','attributes':{'detailedHourly':pv_day((2026,10,19))}},
-   'binary_sensor.workday':{'state':'off','attributes':{},'last_reported':now_iso},
+   'sensor.example_soc':reading(75,'%'),
+   'sensor.example_capacity':reading(9.2,'kWh'),
+   'sensor.example_charge':reading(5000,'W'),
+   'sensor.example_discharge':reading(5000,'W'),
+   'sensor.example_pv_updated':{'state':now_iso,'attributes':{},'last_reported':now_iso},
+   'sensor.example_pv_today':{'state':'0','attributes':{'detailedHourly':pv_day((2026,10,18))}},
+   'sensor.example_pv_tomorrow':{'state':'0','attributes':{'detailedHourly':pv_day((2026,10,19))}},
+   'binary_sensor.example_workday':{'state':'off','attributes':{},'last_reported':now_iso},
   }
   config={
-   'capacity_entity':'sensor.capacity','charge_limit_entity':'sensor.charge','discharge_limit_entity':'sensor.discharge',
-   'pv_updated_entity':'sensor.pv_updated','pv_forecast_entities':['sensor.pv_today','sensor.pv_tomorrow'],
+   'capacity_entity':'sensor.example_capacity','charge_limit_entity':'sensor.example_charge','discharge_limit_entity':'sensor.example_discharge',
+   'pv_updated_entity':'sensor.example_pv_updated','pv_forecast_entities':['sensor.example_pv_today','sensor.example_pv_tomorrow'],
    'working_rates_pln_kwh':{'dolina':.6368,'szczyt_przedpoludniowy':.9235,'szczyt_popoludniowy':1.5109},
    'rates_effective_from':'2026-10-01T00:00:00+02:00',
    'simulation_charge_eff':.9,'simulation_discharge_eff':.9,'include_current_slot':True,
   }
-  options={'observation':{'solar_sources':{'b1_soc':'sensor.soc'},'boiler_sources':{'workday':'binary_sensor.workday'}}}
+  options={'observation':{'solar_sources':{'b1_soc':'sensor.example_soc'},'boiler_sources':{'workday':'binary_sensor.example_workday'}}}
   profile={
    'ready':True,'control_approved':False,'unique_ha_snapshots':10,
    'observed_start':(now-timedelta(minutes=25)).isoformat(),
