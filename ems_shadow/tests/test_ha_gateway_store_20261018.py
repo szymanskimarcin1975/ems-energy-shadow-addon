@@ -141,5 +141,55 @@ class DurableGatewaySafety(unittest.TestCase):
         self.assertFalse(hasattr(self.gate, "select_option"))
 
 
+class EmergencyStopLatch(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.path = Path(self.temp.name) / "ha-gate.sqlite"
+        self.gate = GATE.EpochStore(self.path)
+        self.gate.initialize()
+
+    def test_stop_is_durable_and_blocks_dispatch_after_reopen(self):
+        result = self.gate.trip_emergency_stop(
+            "INVERTER_FAULT", request_id="fault_cycle_9", owner_epoch=0,
+            evidence={"fault": "I_STATUS_FAULT", "telemetry_age_s": 2},
+        )
+        self.assertEqual(result["status"], "LATCHED")
+        reopened = GATE.EpochStore(self.path)
+        status = reopened.status()
+        self.assertTrue(status["emergency_stop"]["latched"])
+        self.assertEqual(status["emergency_stop"]["last_reason"], "INVERTER_FAULT")
+        reply = reopened.dispatch_rejected(request(request_id="new_after_stop"))
+        self.assertEqual(reply["reason"], "EMERGENCY_STOP_LATCHED")
+        self.assertFalse(reply["writes_started"])
+        with sqlite3.connect(self.path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM emergency_events").fetchone()[0], 1)
+
+    def test_latch_has_no_automatic_clear_and_reports_active_command_unknown(self):
+        result = self.gate.trip_emergency_stop("UNKNOWN_COMMAND_OUTCOME")
+        self.assertFalse(result["active_command_canceled"])
+        self.assertEqual(result["active_command_state"], "UNKNOWN_ACTIVE_COMMAND")
+        reopened = GATE.EpochStore(self.path)
+        self.assertEqual(reopened.status()["status"], "EMERGENCY_STOP_LATCHED")
+        self.assertFalse(hasattr(reopened, "clear_emergency_stop"))
+        self.assertFalse(reopened.status()["emergency_stop"]["automatic_resume"])
+
+    def test_stop_validates_cause_and_bounds_evidence(self):
+        with self.assertRaises(ValueError):
+            self.gate.trip_emergency_stop("free text")
+        with self.assertRaises(ValueError):
+            self.gate.trip_emergency_stop("VALID_REASON", evidence={"x": "z" * 5000})
+        self.assertFalse(self.gate.status()["emergency_stop"]["latched"])
+
+    def test_repeated_stop_appends_audit_events_but_stays_latched(self):
+        self.gate.trip_emergency_stop("STALE_TELEMETRY")
+        self.gate.trip_emergency_stop("OWNER_EPOCH_CONFLICT", owner_epoch=3)
+        status = self.gate.status()["emergency_stop"]
+        self.assertTrue(status["latched"])
+        self.assertEqual(status["event_count"], 2)
+        self.assertEqual(status["last_reason"], "OWNER_EPOCH_CONFLICT")
+
+
 if __name__ == "__main__":
     unittest.main()

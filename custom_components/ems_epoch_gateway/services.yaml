@@ -49,3 +49,30 @@ dispatch:
         number:
           min: 0
           mode: box
+
+emergency_stop:
+  name: Latch Emergency STOP
+  description: >
+    Persistently block all new EMS2 dispatch requests. This does not cancel a command
+    already accepted by the inverter. There is intentionally no automatic clear or resume.
+  response:
+    optional: false
+  fields:
+    reason:
+      required: true
+      selector:
+        text:
+    request_id:
+      required: false
+      selector:
+        text:
+    owner_epoch:
+      required: false
+      selector:
+        number:
+          min: 0
+          mode: box
+    evidence:
+      required: false
+      selector:
+        object:
