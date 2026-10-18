@@ -2,10 +2,11 @@
 The boiler-only scope is not the building load. No PV measurement is inferred.
 """
 import hashlib,json,sqlite3,shutil
+from statistics import median
 from datetime import timedelta
 from pathlib import Path
 from soc_profile import load_profile,planning_policy
-from household_advisory import schedule as household_schedule
+from household_advisory import (schedule as household_schedule,load_history,actual_hourly_rows)
 from weather_demand import stamp,number
 from building_balance import inspect
 from balance_quality import Quality
@@ -19,7 +20,7 @@ def value(states,entity,unit,at,age=240):
     if not 0<=(stamp(at)-stamp(s['last_reported'])).total_seconds()<=age:raise ValueError('stale_or_future_input:'+entity)
     return number(s['state'])
 
-def plan(states,prediction,at,config,options,building_profile=None,input_safety=None):
+def plan(states,prediction,at,config,options,building_profile=None,input_safety=None,household_history=None,household_error_biases=None):
     approved_planning=planning_policy(load_profile())
     solar=options['observation']['solar_sources']; old=options['sources']
     evidence=config.get('m1_scope_evidence',{})
@@ -142,7 +143,7 @@ def plan(states,prediction,at,config,options,building_profile=None,input_safety=
     try:
         if config.get('household_history_enabled') is not True:raise ValueError('household_history_disabled')
         if not scope_confirmed:raise ValueError('m1_scope_unconfirmed')
-        house=household_schedule(states,at,config,options,building_profile,input_safety,approved_planning)
+        house=household_schedule(states,at,config,options,building_profile,input_safety,approved_planning,history_override=household_history,error_biases=household_error_biases)
         r['household_advisory']=house
         r['building_decisions']=house['decisions']
         r['status']='ADVISORY_HOUSEHOLD_SCHEDULE_READY'
@@ -167,6 +168,15 @@ class Planner:
         try:
             self.c.execute('PRAGMA journal_mode=WAL');self.c.execute('PRAGMA synchronous=FULL')
             self.c.execute('CREATE TABLE IF NOT EXISTS runs(id PRIMARY KEY,fingerprint,record)')
+            self.c.execute("""CREATE TABLE IF NOT EXISTS household_forecasts(
+                source_entity TEXT NOT NULL,target_at TEXT NOT NULL,generated_at TEXT NOT NULL,
+                local_hour INTEGER NOT NULL,local_day TEXT NOT NULL,prediction_kwh REAL NOT NULL,
+                method TEXT NOT NULL,PRIMARY KEY(source_entity,target_at))""")
+            self.c.execute("""CREATE TABLE IF NOT EXISTS household_forecast_errors(
+                source_entity TEXT NOT NULL,target_at TEXT NOT NULL,forecast_generated_at TEXT NOT NULL,
+                actual_observed_at TEXT NOT NULL,local_hour INTEGER NOT NULL,local_day TEXT NOT NULL,
+                prediction_kwh REAL NOT NULL,actual_kwh REAL NOT NULL,error_kwh REAL NOT NULL,
+                PRIMARY KEY(source_entity,target_at,forecast_generated_at))""")
             self.quality=Quality(self.c)
             self.safety=Safety(self.c)
         except Exception:
@@ -179,9 +189,78 @@ class Planner:
         result=self.quality.observe(states,at,options)
         self.safety.observe(states,at,options)
         return result
+    def record_household_forecasts(self,source_entity,generated_at,horizon):
+        if not isinstance(source_entity,str) or not source_entity or not isinstance(horizon,list):return 0
+        generated=stamp(generated_at);count=0
+        for row in horizon:
+            try:
+                target=stamp(row['valid_for'])
+                prediction=row.get('prediction_kwh')
+                if target<=generated or type(prediction) not in (int,float) or prediction<0:continue
+                local=target.astimezone(ZONE)
+                self.c.execute("""INSERT INTO household_forecasts
+                    (source_entity,target_at,generated_at,local_hour,local_day,prediction_kwh,method)
+                    VALUES(?,?,?,?,?,?,?)
+                    ON CONFLICT(source_entity,target_at) DO UPDATE SET
+                    generated_at=excluded.generated_at,local_hour=excluded.local_hour,
+                    local_day=excluded.local_day,prediction_kwh=excluded.prediction_kwh,method=excluded.method
+                    WHERE excluded.generated_at>household_forecasts.generated_at""",
+                    (source_entity,target.isoformat(),generated.isoformat(),local.hour,local.date().isoformat(),
+                     float(prediction),str(row.get('method','unknown'))))
+                count+=1
+            except (KeyError,TypeError,ValueError,OverflowError):continue
+        return count
+    def reconcile_forecast_errors(self,source_entity,actual_rows):
+        if not isinstance(source_entity,str) or not source_entity or not isinstance(actual_rows,list):return 0
+        count=0
+        for actual in actual_rows:
+            try:
+                target=stamp(actual['target_at']);observed=stamp(actual['observed_at'])
+                value=actual['actual_kwh']
+                hour=actual['local_hour'];day=actual['local_day']
+                if type(value) not in (int,float) or value<0 or type(hour) is not int or not 0<=hour<=23:continue
+                forecast=self.c.execute("""SELECT generated_at,local_hour,local_day,prediction_kwh
+                    FROM household_forecasts WHERE source_entity=? AND target_at=?""",
+                    (source_entity,target.isoformat())).fetchone()
+                if not forecast or stamp(forecast[0])>=target:continue
+                cur=self.c.execute("""INSERT OR IGNORE INTO household_forecast_errors
+                    VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (source_entity,target.isoformat(),forecast[0],observed.isoformat(),hour,day,
+                     forecast[3],float(value),float(value)-forecast[3]))
+                count+=max(cur.rowcount,0)
+            except (KeyError,TypeError,ValueError,OverflowError):continue
+        return count
+    def error_biases(self,source_entity,at):
+        if not isinstance(source_entity,str) or not source_entity:return {}
+        cutoff=(stamp(at)-timedelta(days=30)).isoformat()
+        rows=self.c.execute("""SELECT local_hour,local_day,error_kwh FROM household_forecast_errors
+            WHERE source_entity=? AND actual_observed_at>=? ORDER BY actual_observed_at DESC""",
+            (source_entity,cutoff)).fetchall()
+        grouped={}
+        for hour,day,error in rows:grouped.setdefault(hour,[]).append((day,error))
+        result={}
+        for hour,items in grouped.items():
+            days={day for day,_ in items}
+            if len(days)<3:continue
+            result[hour]={'median_error_kwh':median(error for _,error in items),
+                          'samples':len(items),'distinct_days':len(days),'window_days':30}
+        return result
     def run(self,states,prediction,at,config,options):
         self.storage_guard()
-        record=plan(states,prediction,at,config,options,self.quality.summary(at),self.safety.summary(at))
+        history=load_history()
+        source=history.get('source_entity') if isinstance(history,dict) else None
+        actuals=actual_hourly_rows(history,at)
+        reconciled=self.reconcile_forecast_errors(source,actuals)
+        biases=self.error_biases(source,at)
+        record=plan(states,prediction,at,config,options,self.quality.summary(at),self.safety.summary(at),
+                    household_history=history,household_error_biases=biases)
+        household=record.get('household_advisory',{})
+        forecast=household.get('forecast',{}) if isinstance(household,dict) else {}
+        horizon=forecast.get('horizon',[]) if isinstance(forecast,dict) else []
+        stored_forecasts=self.record_household_forecasts(source,at,horizon)
+        if isinstance(household,dict):household['forecast_feedback']={'matched_completed_hours':reconciled,
+            'persisted_future_forecasts':stored_forecasts,'bias_hours_available':len(biases),
+            'bias_minimum_distinct_days':3,'bias_window_days':30,'calibrated_for_control':False}
         digest=hashlib.sha256(json.dumps(dict(planning=config,approved_soc_planning=record['planning_soc_policy'],observation=options['observation'],legacy_sources=options['sources']),sort_keys=True).encode()).hexdigest()
         record['planning_config_fingerprint']=digest
         self.c.execute('BEGIN IMMEDIATE')
