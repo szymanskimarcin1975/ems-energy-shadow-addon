@@ -65,6 +65,16 @@ class AdvisoryEconomics(unittest.TestCase):
   self.assertAlmostEqual(workday['terminal_value_pln_per_kwh'],.6368)
   self.assertTrue(all(x['discharge_ac_kwh']<1e-9 for x in workday['schedule']
                       if datetime.fromisoformat(x['valid_for']).astimezone(ZONE).date()==datetime(2026,10,18).date()))
+  # Owner-approved planning limits are distinct from hardware BMS authority.
+  with patch('household_advisory.load_history',return_value=None):
+   bounded=schedule(states,now_iso,config,options,profile,{'current_ha_set_valid':True},
+                    {'owner_approved':True,'soc_min':5,'soc_max':95})
+  self.assertEqual(bounded['planning_min_soc_percent'],5)
+  self.assertEqual(bounded['planning_max_soc_percent'],95)
+  self.assertEqual(len(bounded['decisions']),4)
+  self.assertTrue(all(row['stored_kwh']<=9.2*.95+1e-9 for d in bounded['decisions'] for row in d['schedule']))
+  self.assertTrue(all(abs(d['scenario_ceiling_kwh']-9.2*.95)<1e-9 for d in bounded['decisions']))
+  self.assertFalse(bounded['control_enabled'])
   self.assertIsNone(result['workday_soc_deadline']['target_percent'])
   self.assertEqual(result['workday_soc_deadline']['policy'],'FORECAST_NET_EXPENSIVE_HOURS_ENERGY_NOT_FIXED_100_PERCENT')
 
