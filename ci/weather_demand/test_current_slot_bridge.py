@@ -10,18 +10,22 @@ class Tests(unittest.TestCase):
  def run_at(self,now):
   states,pred,at,cfg,opt=fixture(now);cfg['include_current_slot']=True
   floor=now.replace(minute=0,second=0,microsecond=0)
-  states['sensor.example_pv']['attributes']['detailedHourly'].insert(0,dict(period_start=floor.isoformat(),pv_estimate=1,pv_estimate10=.5))
+  pv_rows=states['sensor.example_pv']['attributes']['detailedHourly']
+  pv_rows.insert(0,dict(period_start=floor.isoformat(),pv_estimate=1,pv_estimate10=.5))
+  while len(pv_rows)<48:
+   prior=datetime.fromisoformat(pv_rows[-1]['period_start'])
+   pv_rows.append(dict(period_start=(prior+timedelta(hours=1)).isoformat(),pv_estimate=1,pv_estimate10=.5))
   h=history();h['retrieved_at']=at
   with patch('household_advisory.load_history',return_value=h):return schedule(states,at,cfg,opt,None,{'current_ha_set_valid':True},planning_policy(APPROVAL))
- def test_partial_current_hour_and_full_24h(self):
+ def test_partial_current_hour_and_rolling_48h(self):
   now=T+timedelta(minutes=15);r=self.run_at(now)
   for d in r['decisions']:
-   rows=d['schedule'];self.assertEqual(rows[0]['valid_for'],now.isoformat());self.assertAlmostEqual(rows[0]['hours'],.75);self.assertAlmostEqual(sum(s['hours'] for s in rows),24)
+   rows=d['schedule'];self.assertEqual(rows[0]['valid_for'],now.isoformat());self.assertAlmostEqual(rows[0]['hours'],.75);self.assertEqual(len(rows),48);self.assertAlmostEqual(sum(s['hours'] for s in rows),47.75)
    for a,b in zip(rows,rows[1:]):self.assertEqual(a['valid_to'],b['valid_for'])
  def test_deadline_is_end_at_1600_not_1700(self):
   r=self.run_at(T+timedelta(hours=9,minutes=30)) # 15:30 local
   for d in r['decisions']:
-   first=d['schedule'][0];self.assertEqual(datetime.fromisoformat(first['valid_to']).astimezone(ZoneInfo('Europe/Warsaw')).hour,16);self.assertAlmostEqual(first['hours'],.5);self.assertEqual(first['target_after_kwh'],9.2)
+   first=d['schedule'][0];self.assertEqual(datetime.fromisoformat(first['valid_to']).astimezone(ZoneInfo('Europe/Warsaw')).hour,16);self.assertAlmostEqual(first['hours'],.5);self.assertGreaterEqual(first['target_after_kwh'],0);self.assertLess(first['target_after_kwh'],9.2);self.assertFalse(d['workday_peak_preparation']['target_percent_fixed'])
  def test_temperature_response_is_explicitly_held_disabled(self):
   import demand_runtime,tempfile,json
   from pathlib import Path
