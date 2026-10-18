@@ -119,8 +119,10 @@ class ActuationGateway:
             # Persist attempt before transport: a timeout/restart may never repeat it.
             if current['result'].get('stop_attempted'):
                 return dict(status='UNKNOWN_ACTIVE_COMMAND', active_command_canceled=False, automatic_retry=False)
-            result = dict(current['result'], stop_attempted=True)
-            await self.run_db(self.store.record, request_id, 'UNKNOWN', current['writes_started'], result)
+            claimed = await self.run_db(self.store.reserve_stop, request_id)
+            if claimed is None:
+                return dict(status='UNKNOWN_ACTIVE_COMMAND', active_command_canceled=False, automatic_retry=False)
+            result = dict(claimed['result'])
             try:
                 await self.adapter.verify_stop_procedure(request_id)
                 await self.adapter.request_local_mode(request_id)

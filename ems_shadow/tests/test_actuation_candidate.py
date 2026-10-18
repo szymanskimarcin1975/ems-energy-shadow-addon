@@ -146,6 +146,15 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         a,b=await asyncio.gather(self.engine.dispatch(request(request_id='one')),other.dispatch(request(request_id='two')))
         self.assertEqual(len(self.device.calls),1)
         self.assertIn('UNKNOWN', (a['status'],b['status']))
+    async def test_two_gateways_cannot_repeat_stop(self):
+        await self.engine.dispatch(request())
+        self.device.ended=False
+        other=Engine(self.store,self.device,self.db)
+        await asyncio.gather(self.engine.stop('test_request'),other.stop('test_request'))
+        self.assertEqual([x[0] for x in self.device.calls].count('STOP'),1)
+        self.assertTrue(self.store.active('test_request')['result']['stop_attempted'])
+        self.assertEqual(self.store.active('test_request')['state'],'UNKNOWN')
+
     async def test_changed_request_identity_not_replayed(self):
         r=request(); await self.engine.dispatch(r)
         result=await self.engine.dispatch(dict(r,power_w=700))

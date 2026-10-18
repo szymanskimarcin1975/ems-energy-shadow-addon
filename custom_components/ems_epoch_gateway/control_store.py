@@ -117,6 +117,22 @@ class ControlStore(EpochStore):
                        (state, int(started or row[1]), payload, time.time(), request_id))
             db.commit()
 
+    def reserve_stop(self, request_id):
+        """Cross-process one-shot STOP claim, committed before any transport."""
+        with closing(self._connect()) as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT state,writes_started,result FROM control_commands WHERE request_id=?', (request_id,)).fetchone()
+            if row is None or row[0] not in ('ACK_ACTIVE', 'UNKNOWN'):
+                return None
+            result = json.loads(row[2])
+            if result.get('stop_attempted'):
+                return None
+            result['stop_attempted'] = True
+            db.execute("UPDATE control_commands SET state='UNKNOWN',result=?,updated_at=? WHERE request_id=?",
+                       (json.dumps(result, allow_nan=False, sort_keys=True), time.time(), request_id))
+            db.commit()
+            return dict(state='UNKNOWN', writes_started=bool(row[1]), result=result)
+
     def active(self, request_id):
         with closing(self._connect()) as db:
             row = db.execute('SELECT state,writes_started,result FROM control_commands WHERE request_id=?', (request_id,)).fetchone()
