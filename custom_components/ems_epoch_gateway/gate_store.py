@@ -6,6 +6,7 @@ ownership evidence. A committed PENDING reservation is never replayed.
 from __future__ import annotations
 
 import hashlib
+from contextlib import closing
 import json
 import math
 import re
@@ -88,7 +89,7 @@ class EpochStore:
         return rows[0][:2]
 
     def initialize(self):
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS trusted_owner(
                 id INTEGER PRIMARY KEY CHECK(id=1),
@@ -109,7 +110,7 @@ class EpochStore:
 
     def status(self) -> dict:
         try:
-            with self._connect() as db:
+            with closing(self._connect()) as db:
                 db.execute("BEGIN")
                 owner, epoch = self._owner(db)
                 pending = db.execute("SELECT COUNT(*) FROM requests WHERE state IN ('PENDING','UNKNOWN')").fetchone()[0]
@@ -138,7 +139,7 @@ class EpochStore:
         to exercise reboot/crash-safe deduplication without actuator authority.
         """
         digest = request_hash(normalized)
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             owner, epoch = self._owner(db)
             row = db.execute("SELECT payload_sha256,state FROM requests WHERE request_id=?",
@@ -161,7 +162,7 @@ class EpochStore:
 
     def finish_without_write(self, normalized: dict) -> str:
         """Confirm rejection only for the exact committed request identity."""
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             self._owner(db)
             row = db.execute("SELECT payload_sha256,state FROM requests WHERE request_id=?",
