@@ -55,12 +55,12 @@ class HandoverFailClosedTests(unittest.TestCase):
             Path(self.tmp.name) / "commands.sqlite",
             Path(self.tmp.name) / "executor.lock",
             old_writers=["automation.legacy"],
-            soc_entity="sensor.soc", mode_entity="select.command",
+            soc_entity="sensor.example_soc", mode_entity="select.command",
             power_entities=("number.charge", "number.discharge"),
             owner_entity="input_select.owner",
             control_entity="select.control",
             bms_sources={
-                role: "sensor." + role
+                role: "sensor.example_" + role
                 for role in ("status", "max_charge", "peak_charge",
                              "max_discharge", "peak_discharge")
             },
