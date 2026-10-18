@@ -151,6 +151,15 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
             result["helper_sync"] = "UNKNOWN_BLOCKED"
         return result
 
+    async def command_status(call: ServiceCall) -> dict:
+        engine = hass.data.get(DOMAIN, {}).get(DATA_ENGINE)
+        if engine is None:
+            return {"status": "ACTUATION_CANDIDATE_NOT_CONFIGURED", "writes_started": False}
+        return await engine.command_status(call.data["request_id"])
+
+    async_register_admin_service(hass, DOMAIN, "command_status", command_status,
+        schema=vol.Schema({vol.Required("request_id"): cv.string}), supports_response=SupportsResponse.ONLY)
+
     async def stop_command(call: ServiceCall) -> dict:
         engine = hass.data.get(DOMAIN, {}).get(DATA_ENGINE)
         if engine is None:

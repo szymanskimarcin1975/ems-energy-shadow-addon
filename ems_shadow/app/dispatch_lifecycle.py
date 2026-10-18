@@ -10,7 +10,7 @@ def initialise(db):
  db.execute('CREATE TABLE IF NOT EXISTS dispatch_audit(id INTEGER PRIMARY KEY,request_id TEXT NOT NULL,event TEXT NOT NULL,record TEXT NOT NULL)')
  # Import no claims of completion from an older executor journal.
  if db.execute('SELECT 1 FROM active_dispatch').fetchone() is None:
-  old=db.execute("SELECT id,mode FROM commands WHERE status IN ('ACK','PENDING','UNKNOWN') ORDER BY rowid DESC LIMIT 1").fetchone()
+  old=db.execute("SELECT id,mode FROM commands WHERE status IN ('ACK','PENDING','WAITING','UNKNOWN') ORDER BY rowid DESC LIMIT 1").fetchone()
   if old:
    db.execute('INSERT INTO active_dispatch VALUES(1,?,?,?,?,?)',(old[0],old[1],'UNKNOWN_IMPORTED_HISTORY','1970-01-01T00:00:00+00:00','1970-01-01T00:00:00+00:00'));db.commit()
 def state(db):
@@ -26,7 +26,7 @@ def event(db,request_id,name,record):db.execute('INSERT INTO dispatch_audit(requ
 def begin(db,request_id,option,now):
  db.execute('INSERT OR REPLACE INTO active_dispatch VALUES(1,?,?,?,?,?)',(request_id,option,'PENDING',now.isoformat(),now.isoformat()));event(db,request_id,'PENDING',{'at':now.isoformat(),'option':option})
 def finish(db,request_id,status,now):
- new={'ACK':'ACK_ACTIVE_NOT_TERMINATED','REJECTED':'REJECTED_NO_WRITE'}.get(status,'UNKNOWN_REQUIRES_RECONCILIATION')
+ new={'ACK':'ACK_ACTIVE_NOT_TERMINATED','REJECTED':'REJECTED_NO_WRITE','WAITING':'WAITING_PHYSICAL_READBACK','ENDED':'ENDED_CONFIRMED'}.get(status,'UNKNOWN_REQUIRES_RECONCILIATION')
  db.execute('UPDATE active_dispatch SET status=?,updated_at=? WHERE request_id=?',(new,now.isoformat(),request_id));event(db,request_id,new,{'at':now.isoformat()})
 def hold(db,now,reason):
  s=state(db)

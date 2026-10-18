@@ -25,6 +25,7 @@ async def main():
             assert hass.services.has_service('ems_epoch_gateway','dispatch')
             assert hass.services.has_service('ems_epoch_gateway','transition_owner')
             assert hass.services.has_service('ems_epoch_gateway','stop_command')
+            assert hass.services.has_service('ems_epoch_gateway','command_status')
             from custom_components.ems_epoch_gateway.gate_store import EpochStore
             store=EpochStore(Path(directory)/'test.sqlite'); await hass.async_add_executor_job(store.initialize)
             hass.data['ems_epoch_gateway']['store']=store
@@ -55,6 +56,13 @@ async def main():
                 pass
             else:
                 raise AssertionError('non-admin dispatch accepted')
+            try:
+                await hass.services.async_call('ems_epoch_gateway','command_status',{'request_id':'isolated_ha_request'},
+                    blocking=True,return_response=True,context=Context(user_id='nonadmin'))
+            except Unauthorized:
+                pass
+            else:
+                raise AssertionError('non-admin command outcome accepted')
             # Real HA service dispatcher -> production engine -> simulated device.
             sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'ems_shadow/tests'))
             from test_actuation_candidate import Device
@@ -73,6 +81,24 @@ async def main():
             assert len(device.calls)==1
             result=await hass.services.async_call('ems_epoch_gateway','dispatch',active,blocking=True,return_response=True)
             assert result['status']=='UNKNOWN' and len(device.calls)==1
+            # Actual HA service roundtrip remains short while device polls take120s.
+            sys.path.insert(0,str(Path(__file__).resolve().parent))
+            from test_poll120 import SlowDevice
+            clock=[1000.0]
+            delayed_store=ControlStore(Path(directory)/'poll120.sqlite')
+            await hass.async_add_executor_job(delayed_store.initialize)
+            await hass.async_add_executor_job(delayed_store.transition_owner,0,'EMS2','synthetic-only')
+            delayed_device=SlowDevice(lambda:clock[0])
+            delayed_engine=ActuationGateway(delayed_store,delayed_device,hass.async_add_executor_job,clock=lambda:clock[0])
+            hass.data['ems_epoch_gateway']['actuation_engine']=delayed_engine
+            hass.data['ems_epoch_gateway']['store']=delayed_store
+            payload120=dict(active,request_id='poll120_api',expires_at=1050)
+            reply=await hass.services.async_call('ems_epoch_gateway','dispatch',payload120,blocking=True,return_response=True)
+            assert reply['status']=='WAITING_CONFIRMATION' and not reply['device_execution_confirmed']
+            clock[0]+=120;delayed_device.poll=clock[0];await delayed_engine.monitor_once()
+            reply=await hass.services.async_call('ems_epoch_gateway','command_status',{'request_id':'poll120_api'},blocking=True,return_response=True)
+            assert reply['command_state']=='ACK_ACTIVE' and reply['device_execution_confirmed']
+            assert len(delayed_device.calls)==1
             await component.async_unload_entry(hass,None)
             assert 'actuation_engine' not in hass.data['ems_epoch_gateway']
             assert store.status()['trusted_owner']=='LEGACY'

@@ -200,7 +200,7 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         async def owner(): return dict(trusted_owner='EMS2',trusted_epoch=1,physical_authorized=True,emergency_stop={'latched':False})
         self.adapter=Adapter(hass,self.config,owner,NS(async_get=registry.get)); self.adapter.write_retry_count=lambda:1
         self.adapter.termination_observer=AsyncTermination
-        async def plan_validation(req): pass
+        async def plan_validation(req, monitoring=False): return self.now+360
         self.adapter.validate_plan=plan_validation
         self.adapter.capture_poll()
     async def test_successful_poll_uses_raw_bms_not_unchanged_entity_time(self):
@@ -276,26 +276,30 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def test_post_write_poll_confirms_mode_and_b1_effect_not_only_ha_ack(self):
         req=request(); power=700
         await self.adapter.apply(req,power)
-        task=asyncio.create_task(self.adapter.confirm_effect(req,power))
-        await asyncio.sleep(0)
+        after=self.now
+        self.assertTrue((await self.adapter.confirm_effect(req,power,after=after))['pending_confirmation'])
         c=self.hub.inverters[0].storage_control_data
         c.command_mode=2; c.charge_limit=power; c.command_timeout=30
         self.hub.batteries[0].battery_data.B_DC_Power=650
-        self.now=time.time(); self.adapter.capture_poll()
-        result=await task
+        self.now+=120; self.adapter.clock=lambda:self.now
+        for e in self.adapter.config['verified_evidence'].values():e['valid_until']=self.now+60
+        self.adapter.capture_poll()
+        result=await self.adapter.confirm_effect(req,power,after=after)
         self.assertTrue(result['physical_effect_confirmed'])
         self.assertEqual(result['request_id'],req['request_id'])
         self.assertFalse(result['no_export_physically_proven'])
     async def test_power_above_limit_is_not_confirmed_from_service_success(self):
         req=request(); power=700
         await self.adapter.apply(req,power)
-        task=asyncio.create_task(self.adapter.confirm_effect(req,power))
-        await asyncio.sleep(0)
+        after=self.now
+        self.assertTrue((await self.adapter.confirm_effect(req,power,after=after))['pending_confirmation'])
         c=self.hub.inverters[0].storage_control_data
         c.command_mode=2; c.charge_limit=power; c.command_timeout=30
         self.hub.batteries[0].battery_data.B_DC_Power=3000
-        self.now=time.time(); self.adapter.capture_poll()
-        self.assertFalse((await task)['physical_effect_confirmed'])
+        self.now+=120; self.adapter.clock=lambda:self.now
+        for e in self.adapter.config['verified_evidence'].values():e['valid_until']=self.now+60
+        self.adapter.capture_poll()
+        self.assertFalse((await self.adapter.confirm_effect(req,power,after=after))['physical_effect_confirmed'])
 
 
 class PlanAuthorityTests(unittest.TestCase):

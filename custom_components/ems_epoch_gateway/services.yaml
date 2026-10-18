@@ -105,3 +105,12 @@ stop_command:
       required: true
       selector:
         text:
+
+command_status:
+  name: Read persisted command outcome
+  description: Administrator-only read; never dispatches, retries or stops a command.
+  fields:
+    request_id:
+      required: true
+      selector:
+        text:

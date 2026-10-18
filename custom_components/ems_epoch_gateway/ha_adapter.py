@@ -23,6 +23,8 @@ CONTROL_SUFFIXES = {
 
 
 class HASolarEdgeAdapter:
+    deferred_confirmation = True
+    poll_interval_s = 120
     def __init__(self, hass, config, owner_status, registry, clock=time.time, termination_observer=None):
         self.hass, self.config, self.owner_status, self.registry, self.clock = hass, copy.deepcopy(config), owner_status, registry, clock
         self.termination_observer = termination_observer or self.observe_local_authority
@@ -155,7 +157,7 @@ class HASolarEdgeAdapter:
             return 1
         return 0
 
-    async def preflight(self, request):
+    async def preflight(self, request, *, monitoring=False):
         await self.verify_handover('EMS2')
         current = await self.owner_status()
         if current['trusted_owner'] != 'EMS2' or current['trusted_epoch'] != request['owner_epoch'] or not current['physical_authorized'] or current['emergency_stop']['latched']:
@@ -170,7 +172,7 @@ class HASolarEdgeAdapter:
             raise ValueError('INTEGRATION_WRITE_RETRIES_UNSAFE')
         if self.termination_observer is None:
             raise ValueError('DEVICE_TERMINATION_OBSERVER_UNAVAILABLE')
-        await self.validate_plan(request)
+        plan_until = await self.validate_plan(request, monitoring=True) if monitoring else await self.validate_plan(request)
         sample = copy.deepcopy(self.sample)
         if sample is None or self.coordinator.last_update_success is not True:
             raise ValueError('COMPLETE_MODBUS_POLL_UNCONFIRMED')
@@ -199,6 +201,7 @@ class HASolarEdgeAdapter:
             raise ValueError('BMS_LIMIT_UNCONFIRMED')
         if min(limits) <= 0:
             raise ValueError('BMS_DIRECTION_LIMIT_ZERO')
+        sample['plan_valid_until'] = plan_until
         sample['direction_limit_w'] = min(limits)
         if direction == 'discharge':
             # Positive M1 is export; never infer demand by clipping a bad balance.
@@ -210,10 +213,13 @@ class HASolarEdgeAdapter:
             sample['direction_limit_w'] = min(sample['direction_limit_w'], -sample['m1_w'] - margin)
         return sample
 
-    async def validate_plan(self, request):
-        await self.hass.async_add_executor_job(read_approved_request,
+    async def monitor_preflight(self, request):
+        return await self.preflight(request, monitoring=True)
+
+    async def validate_plan(self, request, monitoring=False):
+        return await self.hass.async_add_executor_job(read_approved_request,
             self.hass.config.path('ems_shadow/planning_report.yaml'),
-            self.config.get('planner', {}), request, datetime.now(timezone.utc))
+            self.config.get('planner', {}), request, datetime.now(timezone.utc), monitoring)
 
     async def apply(self, request, power):
         direction = 'charge' if request['option'] in CHARGES else 'discharge'
@@ -232,20 +238,15 @@ class HASolarEdgeAdapter:
                 await self.hass.services.async_call(domain, service,
                     {'entity_id': self.config['entities'][role], key: value}, blocking=True)
 
-    async def confirm_effect(self, request, power):
-        before = self.sample['poll_completed_at'] if self.sample else self.clock()
-        self.poll_event.clear()
-        remaining = min(30, request['expires_at'] - self.clock())
-        if remaining <= 0:
-            return {}
-        try:
-            await asyncio.wait_for(self.poll_event.wait(), timeout=remaining)
-        except TimeoutError:
-            return {}
-        s = await self.preflight(request)
+    async def confirm_effect(self, request, power, *, after=None):
+        # Non-blocking observation of a natural 120-second poll. No refresh/I/O.
+        s = copy.deepcopy(self.sample)
+        after = self.clock() if after is None else after
+        if s is None or s['poll_completed_at'] - s['poll_window_bound_s'] <= after:
+            return dict(pending_confirmation=True)
+        s = await self.monitor_preflight(request)
         expected = {'Charge from Solar Power': 2, 'Charge from Solar Power and Grid': 3, 'Discharge to Minimize Import': 5}[request['option']]
         direction = 'charge' if request['option'] in CHARGES else 'discharge'
-        # These checks demonstrate response, not battery-origin export attribution.
         tolerance = self.config.get('power_readback_tolerance_w', 0)
         if not finite(tolerance) or not 0 <= tolerance <= 500:
             return {}
@@ -254,7 +255,7 @@ class HASolarEdgeAdapter:
         if direction == 'discharge' and s['m1_w'] > 0:
             effect = False
         return dict(request_id=request['request_id'], plan_id=request['plan_id'], owner_epoch=request['owner_epoch'],
-                    observed_at=s['poll_completed_at'], physical_effect_confirmed=bool(effect and mode_ok and s['poll_completed_at'] > before),
+                    observed_at=s['poll_completed_at'], physical_effect_confirmed=bool(effect and mode_ok),
                     b1_w=s['b1_w'], m1_w=s['m1_w'], ac_w=s['ac_w'],
                     poll_window_bound_s=s['poll_window_bound_s'], no_export_physically_proven=False)
 
@@ -269,58 +270,55 @@ class HASolarEdgeAdapter:
             raise ValueError('STOP_METHOD_NOT_VERIFIED')
         if self.write_retry_count() != 1:
             raise ValueError('INTEGRATION_WRITE_RETRIES_UNSAFE')
-        if self.sample is None or not 0 <= self.clock() - self.sample['poll_completed_at'] <= 30:
-            raise ValueError('STOP_STATE_UNKNOWN')
+        # STOP revokes Remote authority; it must not wait for fresh telemetry.
+        # Unknown transport result is latched; no automatic retry is permitted.
         self.check_bindings()
 
     async def request_local_mode(self, request_id):
         # Engine persisted stop_attempted BEFORE this method. Neither stage retries.
         # Stage 1 prevents restoring an old forced direction if Remote is re-enabled.
         # Stage 2 removes Remote authority; it does not prove timer expiry.
-        self.stop_started[request_id] = self.clock()
         for role in ('mode', 'control'):
             await self.verify_stop_procedure(request_id)
             async with asyncio.timeout(10):
                 await self.hass.services.async_call('select', 'select_option',
                     {'entity_id': self.config['entities'][role],
                      'option': 'Maximize Self Consumption'}, blocking=True)
+        self.stop_started[request_id] = self.clock()
 
-    async def observe_local_authority(self, request_id):
-        started = self.stop_started.get(request_id)
+    async def observe_local_authority(self, request_id, *, after=None):
+        started = self.stop_started.get(request_id) if after is None else after
         if started is None:
             return dict(request_id=request_id, active_command_ended=False,
                         safe_local_mode_confirmed=False, reason='STOP_NOT_OBSERVED')
-        deadline = self.clock() + 30
-        # A complete poll is a bounded read window, never a device sample clock.
-        while self.clock() < deadline:
-            self.poll_event.clear()
-            samples = [s for s in self.poll_history if s['poll_completed_at'] > started]
-            if len(samples) >= 2:
-                a, b = samples[-2:]
-                valid = (self.coordinator.last_update_success is True and
-                    a['poll_completed_at'] < b['poll_completed_at'] and
-                    0 <= self.clock() - b['poll_completed_at'] <= 30 and
-                    all(s['control'] == 1 and s['mode'] == 7 and s['default'] == 7 and
-                        s['inverter_status'] in (4, 5, 8) and s['bms_status'] in (1, 3, 4, 7) and
-                        finite(s['poll_window_bound_s']) and 0 < s['poll_window_bound_s'] <= 5 and
-                        all(finite(s[k]) for k in ('b1_w', 'm1_w', 'soc')) and
-                        not (s['b1_w'] < 0 and s['m1_w'] > 0) for s in (a, b)))
-                if valid:
-                    # Commissioned method + post-write mode/control readback.
-                    # Never claim physical no-export or timeout from this witness.
-                    return dict(request_id=request_id, active_command_ended=True,
-                        safe_local_mode_confirmed=True, observed_at=b['poll_completed_at'],
-                        basis='REMOTE_AUTHORITY_REVOKED_TWO_COMPLETE_POLLS',
-                        timeout_expiry_confirmed=False, no_export_physically_proven=False,
-                        samples=[a, b])
-            try:
-                await asyncio.wait_for(self.poll_event.wait(), timeout=max(.001, deadline-self.clock()))
-            except TimeoutError:
-                break
-        return dict(request_id=request_id, active_command_ended=False,
-                    safe_local_mode_confirmed=False, reason='UNKNOWN_ACTIVE_COMMAND')
+        # Poll cadence and duration are different. Exclude reads that may have
+        # started before the last STOP write; constant HA states are not a clock.
+        samples = [s for s in self.poll_history
+                   if s['poll_completed_at'] - s['poll_window_bound_s'] > started]
+        if len(samples) >= 2:
+            a, b = samples[-2:]
+            bound = self.config.get('max_poll_window_s', 0)
+            valid = (self.coordinator.last_update_success is True and
+                a['poll_completed_at'] < b['poll_completed_at'] and
+                b['poll_completed_at'] - a['poll_completed_at'] <= 150 and
+                0 <= self.clock() - b['poll_completed_at'] <= 180 and
+                finite(bound) and 0 < bound <= 30 and
+                all(s['control'] == 1 and s['mode'] == 7 and s['default'] == 7 and
+                    s['inverter_status'] in (4, 5, 8) and s['bms_status'] in (1, 3, 4, 7) and
+                    finite(s['poll_window_bound_s']) and 0 < s['poll_window_bound_s'] <= bound and
+                    all(finite(s[k]) for k in ('b1_w', 'm1_w', 'soc')) and
+                    not (s['b1_w'] < 0 and s['m1_w'] > 0) for s in (a, b)))
+            if valid:
+                return dict(request_id=request_id, active_command_ended=True,
+                    safe_local_mode_confirmed=True, observed_at=b['poll_completed_at'],
+                    basis='REMOTE_AUTHORITY_REVOKED_TWO_COMPLETE_POLLS',
+                    timeout_expiry_confirmed=False, no_export_physically_proven=False, samples=[a, b])
+        return dict(request_id=request_id, pending_confirmation=True,
+                    active_command_ended=False, safe_local_mode_confirmed=False)
 
-    async def confirm_termination(self, request_id):
+    async def confirm_termination(self, request_id, *, after=None):
+        if self.termination_observer == self.observe_local_authority:
+            return await self.observe_local_authority(request_id, after=after)
         if self.termination_observer is not None:
             return await self.termination_observer(request_id)
         return dict(request_id=request_id, active_command_ended=False,
