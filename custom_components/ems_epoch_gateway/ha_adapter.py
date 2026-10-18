@@ -7,6 +7,8 @@ import asyncio
 import copy
 import math
 import time
+from datetime import datetime, timezone
+from .plan_guard import read_approved_request
 from .actuation import CHARGES, direction_guard, finite
 
 DOMAIN = 'solaredge_modbus_multi'
@@ -21,8 +23,9 @@ CONTROL_SUFFIXES = {
 
 
 class HASolarEdgeAdapter:
-    def __init__(self, hass, config, owner_status, registry, clock=time.time):
+    def __init__(self, hass, config, owner_status, registry, clock=time.time, termination_observer=None):
         self.hass, self.config, self.owner_status, self.registry, self.clock = hass, copy.deepcopy(config), owner_status, registry, clock
+        self.termination_observer = termination_observer
         self.sample = None
         self.poll_event = asyncio.Event()
         self.entry_id = config['solaredge_entry_id']
@@ -91,7 +94,13 @@ class HASolarEdgeAdapter:
         if self.config.get('physical_authorized') is not True:
             raise ValueError('PHYSICAL_AUTHORIZATION_OFF')
         self.evidence('external_writer_fence')
-        self.evidence('previous_command_ended')
+        ended = self.evidence('previous_command_ended')
+        if ended.get('inverter_command_inactive_confirmed') is not True:
+            raise ValueError('PREVIOUS_COMMAND_NOT_RECONCILED')
+        if self.termination_observer is None:
+            raise ValueError('DEVICE_TERMINATION_OBSERVER_UNAVAILABLE')
+        if self.write_retry_count() != 1:
+            raise ValueError('INTEGRATION_WRITE_RETRIES_UNSAFE')
         self.evidence('fallback')
         self.evidence('battery_no_export')
         self.check_bindings()
@@ -103,6 +112,9 @@ class HASolarEdgeAdapter:
             if (not isinstance(entity, str) or not entity.startswith(('automation.', 'script.')) or state is None or
                     state.state != 'off' or state.attributes.get('current') != 0):
                 raise ValueError('LEGACY_WRITER_NOT_FENCED')
+            changed = getattr(state, 'last_changed', None)
+            if changed is None or ended['verified_at'] < changed.timestamp():
+                raise ValueError('TERMINATION_EVIDENCE_PREDATES_WRITER_QUIESCENCE')
         # This verifies configured HA writers only. External exclusion needs separate evidence.
         if target not in ('EMS2', 'LEGACY'):
             raise ValueError('INVALID_OWNER')
@@ -125,6 +137,9 @@ class HASolarEdgeAdapter:
         # override that by pretending a single HA service call is one device write.
         if self.write_retry_count() != 1:
             raise ValueError('INTEGRATION_WRITE_RETRIES_UNSAFE')
+        if self.termination_observer is None:
+            raise ValueError('DEVICE_TERMINATION_OBSERVER_UNAVAILABLE')
+        await self.validate_plan(request)
         sample = copy.deepcopy(self.sample)
         if sample is None or self.coordinator.last_update_success is not True:
             raise ValueError('COMPLETE_MODBUS_POLL_UNCONFIRMED')
@@ -164,6 +179,11 @@ class HASolarEdgeAdapter:
             sample['direction_limit_w'] = min(sample['direction_limit_w'], -sample['m1_w'] - margin)
         return sample
 
+    async def validate_plan(self, request):
+        await self.hass.async_add_executor_job(read_approved_request,
+            self.hass.config.path('ems_shadow/planning_report.yaml'),
+            self.config.get('planner', {}), request, datetime.now(timezone.utc))
+
     async def apply(self, request, power):
         direction = 'charge' if request['option'] in CHARGES else 'discharge'
         commands = [('number', 'set_value', 'timeout', self.config['command_timeout_s']),
@@ -195,7 +215,10 @@ class HASolarEdgeAdapter:
         expected = {'Charge from Solar Power': 2, 'Charge from Solar Power and Grid': 3, 'Discharge to Minimize Import': 5}[request['option']]
         direction = 'charge' if request['option'] in CHARGES else 'discharge'
         # These checks demonstrate response, not battery-origin export attribution.
-        effect = s['b1_w'] > 0 if direction == 'charge' else s['b1_w'] < 0
+        tolerance = self.config.get('power_readback_tolerance_w', 0)
+        if not finite(tolerance) or not 0 <= tolerance <= 500:
+            return {}
+        effect = (s['b1_w'] > 0 if direction == 'charge' else s['b1_w'] < 0) and abs(s['b1_w']) <= power + tolerance
         mode_ok = s['mode'] == expected and s[direction] == power and s['timeout'] == self.config['command_timeout_s']
         if direction == 'discharge' and s['m1_w'] > 0:
             effect = False
@@ -209,7 +232,9 @@ class HASolarEdgeAdapter:
         if current['trusted_owner'] != 'EMS2':
             raise ValueError('STOP_OWNER_NOT_EMS2')
         self.evidence('external_writer_fence')
-        self.evidence('stop_procedure')  # commissioning evidence, not the mode's name
+        procedure = self.evidence('stop_procedure')
+        if procedure.get('method') != 'command_mode_maximize_self_consumption':
+            raise ValueError('STOP_METHOD_NOT_VERIFIED')
         if self.write_retry_count() != 1:
             raise ValueError('INTEGRATION_WRITE_RETRIES_UNSAFE')
         if self.sample is None or not 0 <= self.clock() - self.sample['poll_completed_at'] <= 30:
@@ -219,10 +244,13 @@ class HASolarEdgeAdapter:
     async def request_local_mode(self, request_id):
         # A verified installation procedure may request this mode. A select ACK
         # does not itself terminate/reconcile the preceding device command.
-        await self.hass.services.async_call('select', 'select_option',
-            {'entity_id': self.config['entities']['mode'], 'option': 'Maximize Self Consumption'}, blocking=True)
+        async with asyncio.timeout(10):
+            await self.hass.services.async_call('select', 'select_option',
+                {'entity_id': self.config['entities']['mode'], 'option': 'Maximize Self Consumption'}, blocking=True)
 
     async def confirm_termination(self, request_id):
         # v4.0.4 has no correlated inactive-command status. Never manufacture one.
+        if self.termination_observer is not None:
+            return await self.termination_observer(request_id)
         return dict(request_id=request_id, active_command_ended=False,
                     safe_local_mode_confirmed=False, reason='DEVICE_TERMINATION_OBSERVER_UNAVAILABLE')

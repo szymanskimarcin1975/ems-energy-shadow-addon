@@ -159,6 +159,10 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         with sqlite3.connect(self.path) as db: self.assertEqual(db.execute('pragma integrity_check').fetchone()[0],'ok')
 
 
+async def AsyncTermination(request_id):
+    return dict(request_id=request_id,active_command_ended=False,safe_local_mode_confirmed=False)
+
+
 class AdapterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.calls=[]; self.states={}; self.now=time.time()
@@ -176,14 +180,17 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
                          import_margin_w=200,command_timeout_s=30,device=dict(model='example_model',firmware='example_fw'))
         suffixes=importlib.import_module(PKG+'.ha_adapter').CONTROL_SUFFIXES
         self.config['entities']={k:domain+'.example'+suffix for k,(domain,suffix) in suffixes.items()}
-        self.config['verified_evidence']={k:dict(verified=True,device=self.config['device'],reference='synthetic-only',verified_at=self.now-1,valid_until=self.now+60,minimum_c=0,maximum_c=40) for k in ('external_writer_fence','previous_command_ended','fallback','battery_no_export','battery_temperature_envelope','stop_procedure')}
-        self.states['automation.example_legacy']=NS(state='off',attributes={'current':0})
+        self.config['verified_evidence']={k:dict(verified=True,device=self.config['device'],reference='synthetic-only',verified_at=self.now-1,valid_until=self.now+60,minimum_c=0,maximum_c=40,inverter_command_inactive_confirmed=True) for k in ('external_writer_fence','previous_command_ended','fallback','battery_no_export','battery_temperature_envelope','stop_procedure')}
+        self.states['automation.example_legacy']=NS(state='off',attributes={'current':0},last_changed=__import__('datetime').datetime.fromtimestamp(self.now-2,__import__('datetime').timezone.utc))
         self.states['input_select.example_owner']=NS(state='EMS2',attributes={})
         self.states['input_boolean.example_auth']=NS(state='on',attributes={})
         registry={e:NS(platform='solaredge_modbus_multi',config_entry_id='entry',device_id='device',disabled_by=None,unique_id='example'+suffixes[k][1]) for k,e in self.config['entities'].items()}
         hass=NS(data={'solaredge_modbus_multi':{'entry':{'hub':self.hub,'coordinator':self.coordinator}}},states=NS(get=self.states.get),services=NS(async_call=call))
         async def owner(): return dict(trusted_owner='EMS2',trusted_epoch=1,physical_authorized=True,emergency_stop={'latched':False})
         self.adapter=Adapter(hass,self.config,owner,NS(async_get=registry.get)); self.adapter.write_retry_count=lambda:1
+        self.adapter.termination_observer=AsyncTermination
+        async def plan_validation(req): pass
+        self.adapter.validate_plan=plan_validation
         self.adapter.capture_poll()
     async def test_successful_poll_uses_raw_bms_not_unchanged_entity_time(self):
         self.assertEqual((await self.adapter.preflight(request()))['soc'],50)
@@ -242,3 +249,41 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(direction_guard('Discharge to Minimize Import',100))
         self.assertEqual(direction_guard('Discharge to Minimize Import',5),'SOC_RESERVE')
         self.assertIsNone(direction_guard('Charge from Solar Power',4))
+
+    async def test_missing_termination_observer_blocks_before_writes(self):
+        self.adapter.termination_observer=None
+        with self.assertRaisesRegex(ValueError,'TERMINATION_OBSERVER_UNAVAILABLE'):
+            await self.adapter.preflight(request())
+        self.assertFalse(self.calls)
+
+
+class PlanAuthorityTests(unittest.TestCase):
+    def setUp(self):
+        from test_plan_bridge import report, CFG, NOW
+        from plan_bridge import build
+        self.report=report(); self.config=CFG.copy(); self.now=NOW
+        intent=build(self.report,self.config,self.now,1)['pending_request']
+        self.request=dict(request_id=intent['request_id'],plan_id=intent['plan_id'],owner_epoch=1,
+                          option=intent['option'],power_w=700,expires_at=self.now.timestamp()+30)
+        self.guard=importlib.import_module(PKG+'.plan_guard').approved_request
+    def test_existing_plan_bridge_identity_accepted_with_lower_safe_power(self):
+        self.guard(self.report,self.config,self.request,self.now)
+    def test_wrong_plan_and_request_identity_refused(self):
+        for key,value in (('plan_id','b'*64),('request_id','forged'),('owner_epoch',2),('power_w',5001)):
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                self.guard(self.report,self.config,dict(self.request,**{key:value}),self.now)
+    def test_unapproved_advisory_plan_refused(self):
+        self.report['whole_building_schedule_approved']=False
+        with self.assertRaisesRegex(ValueError,'NOT_CONTROL_APPROVED'):
+            self.guard(self.report,self.config,self.request,self.now)
+    def test_expired_plan_refused(self):
+        from datetime import timedelta
+        with self.assertRaisesRegex(ValueError,'EXPIRED'):
+            self.guard(self.report,self.config,self.request,self.now+timedelta(seconds=361))
+    def test_wrong_fingerprint_refused(self):
+        self.report['planning_config_fingerprint']='b'*64
+        with self.assertRaisesRegex(ValueError,'FINGERPRINT'):
+            self.guard(self.report,self.config,self.request,self.now)
+    def test_top_level_boiler_plan_is_never_used(self):
+        self.report['decisions']=[{'unexpected':'boiler'}]
+        self.guard(self.report,self.config,self.request,self.now)

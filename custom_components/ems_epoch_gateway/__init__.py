@@ -1,8 +1,7 @@
 """EMS Epoch Gateway: non-actuating by default; optional review-only actuator.
 
-A deliberate staged integration: every dispatch is rejected. Physical writer
-exclusivity, manufacturer fallback and safety bounds must be independently
-proven before a separately reviewed release can add hardware dispatch.
+Physical dispatch remains disabled by default. The optional review candidate
+requires separate commissioning evidence and explicit authorization.
 """
 from __future__ import annotations
 
@@ -136,7 +135,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.services.async_register(DOMAIN, "emergency_stop", emergency_stop,
                                  schema=STOP_SCHEMA,
                                  supports_response=SupportsResponse.ONLY)
-    hass.services.async_register(DOMAIN, "dispatch", dispatch,
+    async_register_admin_service(hass, DOMAIN, "dispatch", dispatch,
                                  schema=DISPATCH_SCHEMA,
                                  supports_response=SupportsResponse.ONLY)
     async def transition_owner(call: ServiceCall) -> dict:
@@ -207,10 +206,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Unload never sends a stop/restore command or starts LEGACY.
     hass.data.get(DOMAIN, {}).pop(DATA_ENGINE, None)
     hass.data.get(DOMAIN, {}).pop(DATA_GATE, None)
-    return True
-
-
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Dropping the in-memory handle never changes persisted ownership."""
-    hass.data.setdefault(DOMAIN, {}).pop(DATA_GATE, None)
     return True

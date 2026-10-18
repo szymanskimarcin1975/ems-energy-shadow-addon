@@ -57,7 +57,7 @@ class SupervisorHA:
             raise RuntimeError('gateway_identity_or_outcome_unknown')
         if reply.get('status')=='REJECTED' and reply.get('writes_started') is False:
             raise GatewayRejected('gateway_confirmed_rejection_before_writes')
-        if reply.get('status')!='SERVICE_COMPLETED' or reply.get('writes_started') is not True or reply.get('owner')!='EMS2' or reply.get('option')!=option:
+        if reply.get('status')!='SERVICE_COMPLETED' or reply.get('device_execution_confirmed') is not True or reply.get('writes_started') is not True or reply.get('owner')!='EMS2' or reply.get('option')!=option:
             raise RuntimeError('gateway_outcome_unknown')
         return reply
 

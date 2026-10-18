@@ -7,6 +7,9 @@ CO, operational SOC 5–95%, old ledgers or the historical SQLite checks.
 
 ## Implemented candidate
 
+- ACTIVE dispatch requires HA administrator/internal service authority. The gateway
+  independently verifies current household plan, fingerprint, slot, request/plan IDs
+  and control approval; a syntactically valid caller-supplied hash grants no authority.
 - ACTIVE and SHADOW use `ems_epoch_gateway.dispatch`. An omitted execution mode
   is READ_ONLY; ACTIVE must be explicit. Default integration setup still uses
   the existing non-actuating journal and exposes no hardware authority.
@@ -20,7 +23,9 @@ CO, operational SOC 5–95%, old ledgers or the historical SQLite checks.
 - SQLite `trusted_owner` remains the authority. Owner transitions are CAS on
   expected epoch, serialize with durable command reservations, require prior
   command reconciliation and reject unresolved requests. Both old and new
-  journals reject reused request IDs. Restart disarms and preserves UNKNOWN;
+  journals reject reused request IDs. Reconciliation evidence must postdate
+  quiescence of known HA writers; an absent termination observer blocks even
+  owner transition, not merely command execution. Restart disarms and preserves UNKNOWN;
   ACK means active, not ended. A DB transaction cannot atomically change a HA
   helper or exclude a direct external Modbus client: failure leaves execution
   blocked. Helpers are informational and additional negative interlocks.
@@ -66,7 +71,8 @@ HOLD only refrains from a new plan command. `stop_command` is a separate one-sho
 attempt, journaled before transport. Only an independently commissioned stop
 procedure can request `Maximize Self Consumption`. That select readback is not
 proof that an earlier command expired. Current v4.0.4 has no correlated
-termination observer in this adapter: `confirm_termination` explicitly returns
+termination observer in this adapter. Preflight refuses the first command while
+that observer is absent, even if configuration contains a claimed proof: `confirm_termination` explicitly returns
 false. UNKNOWN stays blocked across restarts and repeated STOP does not retry.
 
 Consequently **this candidate cannot yet complete an actual handover/rollback**

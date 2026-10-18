@@ -78,7 +78,7 @@ class Tests(unittest.TestCase):
   self.assertEqual(self.execute('next'),'UNKNOWN_REQUIRES_RECONCILIATION')
  def test_real_transport_compound_gateway_only(self):
   from unittest.mock import patch
-  ha=SupervisorHA('synthetic');reply={'status':'SERVICE_COMPLETED','request_id':'test','applied_power_w':1000,'plan_id':'a'*64,'owner_epoch':2,'owner':'EMS2','gateway_contract':'EMS2_COMPOUND_V28','writes_started':True,'option':'Charge from Solar Power and Grid'}
+  ha=SupervisorHA('synthetic');reply={'status':'SERVICE_COMPLETED','device_execution_confirmed':True,'request_id':'test','applied_power_w':1000,'plan_id':'a'*64,'owner_epoch':2,'owner':'EMS2','gateway_contract':'EMS2_COMPOUND_V28','writes_started':True,'option':'Charge from Solar Power and Grid'}
   with patch.object(ha,'_request',return_value={'service_response':reply}) as call:
    self.assertEqual(ha.dispatch('select.example_mode','Charge from Solar Power and Grid',1000,request_id='test',plan_id='a'*64,owner_epoch=2,expires_at=datetime.now(timezone.utc)+timedelta(seconds=30)),reply)
-   self.assertEqual(call.call_args.args[0],'/services/ems_epoch_gateway/dispatch?return_response');self.assertEqual(call.call_args.args[1]['operation'],'dispatch')
+   self.assertEqual(call.call_args.args[0],'/services/ems_epoch_gateway/dispatch?return_response');self.assertEqual(call.call_args.args[1]['operation'],'dispatch');self.assertEqual(call.call_args.args[1]['execution_mode'],'ACTIVE')

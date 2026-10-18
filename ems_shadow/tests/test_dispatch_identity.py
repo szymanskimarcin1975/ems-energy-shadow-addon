@@ -6,7 +6,7 @@ from battery_executor import SupervisorHA,GatewayRejected
 import test_dispatch_lifecycle as fixture
 
 class TransportTests(unittest.TestCase):
- def reply(self):return {'status':'SERVICE_COMPLETED','gateway_contract':'EMS2_COMPOUND_V28','request_id':'request','plan_id':'a'*64,'owner_epoch':2,'owner':'EMS2','option':'Charge from Solar Power and Grid','applied_power_w':1000,'writes_started':True}
+ def reply(self):return {'status':'SERVICE_COMPLETED','device_execution_confirmed':True,'gateway_contract':'EMS2_COMPOUND_V28','request_id':'request','plan_id':'a'*64,'owner_epoch':2,'owner':'EMS2','option':'Charge from Solar Power and Grid','applied_power_w':1000,'writes_started':True}
  def send(self,value):
   ha=SupervisorHA('synthetic')
   with patch.object(ha,'_request',return_value=value):return ha.dispatch('select.example_mode','Charge from Solar Power and Grid',1000,request_id='request',expires_at=datetime.now(timezone.utc)+timedelta(seconds=30),plan_id='a'*64,owner_epoch=2)
@@ -33,7 +33,7 @@ class TransportTests(unittest.TestCase):
     with self.assertRaises(RuntimeError) as raised:self.send({'service_response':r})
     self.assertNotIsInstance(raised.exception,GatewayRejected)
  def test_success_wrong_owner_or_mode_unknown(self):
-  for key,value in (('owner','LEGACY'),('owner','UNKNOWN'),('option','other'),('writes_started',False)):
+  for key,value in (('owner','LEGACY'),('owner','UNKNOWN'),('option','other'),('writes_started',False),('device_execution_confirmed',False)):
    r=self.reply();r[key]=value
    with self.assertRaises(RuntimeError):self.send({'service_response':r})
  def test_timeout_is_not_clean_rejection(self):
@@ -49,7 +49,7 @@ class PersistedTests(unittest.TestCase):
   ha=SupervisorHA('synthetic')
   def send(path,data):
    self.ha.calls.append((data['request_id'],{'option':data['option'],'power_w':data['power_w']}))
-   r={'status':'SERVICE_COMPLETED','gateway_contract':'EMS2_COMPOUND_V28','request_id':data['request_id'],'plan_id':data['plan_id'],'owner_epoch':data['owner_epoch'],'owner':'EMS2','option':data['option'],'applied_power_w':data['power_w'],'writes_started':True}
+   r={'status':'SERVICE_COMPLETED','device_execution_confirmed':True,'gateway_contract':'EMS2_COMPOUND_V28','request_id':data['request_id'],'plan_id':data['plan_id'],'owner_epoch':data['owner_epoch'],'owner':'EMS2','option':data['option'],'applied_power_w':data['power_w'],'writes_started':True}
    self.ha.power=r['applied_power_w'];self.ha.mode=r['option']
    if kind=='timeout':raise TimeoutError('synthetic')
    if kind=='missing':return {}
