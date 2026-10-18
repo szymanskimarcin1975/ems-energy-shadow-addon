@@ -48,8 +48,8 @@ class PersistedTests(unittest.TestCase):
  def transport(self,kind):
   ha=SupervisorHA('synthetic')
   def send(path,data):
-   self.ha.calls.append((data['request_id'],data['command_value']))
-   r={'status':'SERVICE_COMPLETED','gateway_contract':'EMS2_COMPOUND_V28','request_id':data['request_id'],'plan_id':data['plan_id'],'owner_epoch':data['owner_epoch'],'owner':'EMS2','option':data['command_value']['option'],'applied_power_w':data['command_value']['power_w'],'writes_started':True}
+   self.ha.calls.append((data['request_id'],{'option':data['option'],'power_w':data['power_w']}))
+   r={'status':'SERVICE_COMPLETED','gateway_contract':'EMS2_COMPOUND_V28','request_id':data['request_id'],'plan_id':data['plan_id'],'owner_epoch':data['owner_epoch'],'owner':'EMS2','option':data['option'],'applied_power_w':data['power_w'],'writes_started':True}
    self.ha.power=r['applied_power_w'];self.ha.mode=r['option']
    if kind=='timeout':raise TimeoutError('synthetic')
    if kind=='missing':return {}

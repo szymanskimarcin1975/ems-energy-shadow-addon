@@ -28,7 +28,7 @@ class Tests(unittest.TestCase):
   self.ha.peak_charge=1234;self.assertEqual(self.execute(),'ACK');self.assertEqual(self.ha.power,1234)
  def test_clamp_to_rated_inverter_ceiling(self):self.assertEqual(self.execute(watts=9000),'ACK');self.assertEqual(self.ha.power,5000)
  def test_requested_lower_limit_preserved(self):self.assertEqual(self.execute(watts=900),'ACK');self.assertEqual(self.ha.power,900)
- def test_soc_100_hard_block(self):self.ha.soc=100;self.assertEqual(self.execute(),'SOC_OUT_OF_RANGE');self.assertEqual(self.ha.calls,[])
+ def test_soc_100_hard_block(self):self.ha.soc=100;self.assertEqual(self.execute(),'SOC_CEILING');self.assertEqual(self.ha.calls,[])
  def test_zero_peak_hard_block(self):self.ha.peak_charge=0;self.assertEqual(self.execute(),'BMS_DIRECTION_LIMIT_ZERO');self.assertEqual(self.ha.calls,[])
  def test_bms_error_hard_block(self):self.ha.bms_status='B_STATUS_FAULT';self.assertEqual(self.execute(),'BMS_STATUS_NOT_APPROVED');self.assertEqual(self.ha.calls,[])
  def test_stale_bms_hard_block(self):self.ha.bms_age=181;self.assertEqual(self.execute(),'BMS_HA_UPDATE_UNCONFIRMED');self.assertEqual(self.ha.calls,[])
@@ -81,4 +81,4 @@ class Tests(unittest.TestCase):
   ha=SupervisorHA('synthetic');reply={'status':'SERVICE_COMPLETED','request_id':'test','applied_power_w':1000,'plan_id':'a'*64,'owner_epoch':2,'owner':'EMS2','gateway_contract':'EMS2_COMPOUND_V28','writes_started':True,'option':'Charge from Solar Power and Grid'}
   with patch.object(ha,'_request',return_value={'service_response':reply}) as call:
    self.assertEqual(ha.dispatch('select.example_mode','Charge from Solar Power and Grid',1000,request_id='test',plan_id='a'*64,owner_epoch=2,expires_at=datetime.now(timezone.utc)+timedelta(seconds=30)),reply)
-   self.assertEqual(call.call_args.args[0],'/services/script/ems_battery_command_gateway?return_response');self.assertEqual(call.call_args.args[1]['operation'],'dispatch')
+   self.assertEqual(call.call_args.args[0],'/services/ems_epoch_gateway/dispatch?return_response');self.assertEqual(call.call_args.args[1]['operation'],'dispatch')

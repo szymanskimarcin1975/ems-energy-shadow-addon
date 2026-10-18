@@ -5,16 +5,22 @@ on:
     paths:
       - 'custom_components/ems_epoch_gateway/**'
       - 'ems_shadow/tests/test_ha_gateway_store_20261018.py'
+      - 'ems_shadow/tests/test_actuation_candidate.py'
+      - 'ci/actuation/**'
       - '.github/workflows/ems-ha-epoch-gateway.yml'
   pull_request:
     paths:
       - 'custom_components/ems_epoch_gateway/**'
       - 'ems_shadow/tests/test_ha_gateway_store_20261018.py'
+      - 'ems_shadow/tests/test_actuation_candidate.py'
+      - 'ci/actuation/**'
       - '.github/workflows/ems-ha-epoch-gateway.yml'
 
+permissions:
+  contents: read
 jobs:
   gateway:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -35,5 +41,22 @@ jobs:
           assert isinstance(data['codeowners'],list) and data['codeowners']
           assert (p/'services.yaml').exists()
           PY
+      - name: Candidate actuator, fences, stop, restart and simulated device
+        run: python -m unittest discover -s ems_shadow/tests -p test_actuation_candidate.py -v
       - name: Persistent epoch and dedup tests (no HA, no device)
         run: python -m unittest discover -s ems_shadow/tests -p test_ha_gateway_store_20261018.py -v
+
+  ha-api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install exact HA API in isolated CI
+        run: python -m pip install homeassistant==2026.10.0
+      - name: Actual HA service registration, default no-write and permissions
+        run: python ci/actuation/ha_service_smoke.py
