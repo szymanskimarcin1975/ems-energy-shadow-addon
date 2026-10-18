@@ -20,7 +20,31 @@ def load_history():
  except (OSError,ValueError):return None
 
 def finite(v):return type(v) in (float,int) and math.isfinite(v)
-def forecast(history,profile,issued_at,targets,allow_current=False):
+
+def actual_hourly_rows(history,issued_at):
+ """Return only complete, unique, non-future hourly HA aggregates."""
+ now=stamp(issued_at);accepted=[]
+ if not isinstance(history,dict) or history.get('unit')!='W' or not isinstance(history.get('source_entity'),str):return accepted
+ try:
+  retrieved=stamp(history['retrieved_at'])
+  if not 0<=(now-retrieved).total_seconds()<=86400:return accepted
+ except (ValueError,TypeError,KeyError):return accepted
+ seen=set()
+ for row in history.get('rows',[]):
+  try:
+   start,end=stamp(row['start']),stamp(row['end'])
+   lo,mean,hi=(row[k] for k in ('min','mean','max'))
+   if end>retrieved or end>now or (end-start).total_seconds()!=3600 or start in seen:continue
+   if not all(finite(v) for v in (lo,mean,hi)) or not 0<=lo<=mean<=hi:continue
+   seen.add(start)
+   local=start.astimezone(ZONE)
+   accepted.append({'target_at':start.isoformat(),'actual_kwh':mean/1000,
+                    'local_hour':local.hour,'local_day':local.date().isoformat(),
+                    'observed_at':end.isoformat()})
+  except (ValueError,TypeError,KeyError):continue
+ return accepted
+
+def forecast(history,profile,issued_at,targets,allow_current=False,error_biases=None):
  now=stamp(issued_at);hours={};rejected={};accepted=0;seen=set()
  provenance={'source_entity':None,'control_approved':False,'device_synchronisation_confirmed':False,'actual_energy_kwh':None}
  if isinstance(history,dict):
@@ -42,7 +66,7 @@ def forecast(history,profile,issued_at,targets,allow_current=False):
     except (ValueError,TypeError,KeyError):
      rejected['invalid_or_negative_hour']=rejected.get('invalid_or_negative_hour',0)+1
   except (ValueError,TypeError,KeyError):rejected['invalid_history_metadata']=1
- recent=None
+ recent=None;valid_hour_values=list(hours.values())
  try:
   start,end=stamp(profile['observed_start']),stamp(profile['observed_end'])
   if profile.get('ready') is True and profile.get('control_approved') is False and profile.get('unique_ha_snapshots',0)>=5 and (end-start).total_seconds()>=900 and 0<=(now-end).total_seconds()<=240 and finite(profile['power_w']) and profile['power_w']>=0:recent=profile['power_w']/1000
@@ -54,13 +78,22 @@ def forecast(history,profile,issued_at,targets,allow_current=False):
   vals=[v for (hour,day),v in hours.items() if hour==t.astimezone(ZONE).hour]
   if len(vals)>=2:
    pred=median(vals);method='same_local_hour_median_actual_HA_aggregate';sample_range=[min(vals),max(vals)]
+  elif len(vals)==1:
+   pred=vals[0];method='single_actual_same_local_hour_uncalibrated';sample_range=[vals[0],vals[0]]
   elif recent is not None:
-   pred=recent;method='recent_qualified_snapshot_median_persistence';sample_range=None
+   pred=recent;method='recent_qualified_snapshot_persistence_uncalibrated';sample_range=None
+  elif valid_hour_values:
+   pred=max(valid_hour_values);method='conservative_max_observed_hour_uncalibrated';sample_range=[min(valid_hour_values),max(valid_hour_values)]
   else:pred=None;method='insufficient_household_observations';sample_range=None
-  out.append({'valid_for':target,'prediction_kwh':pred,'method':method,'historical_days':len(vals),'historical_sample_range_kwh':sample_range,'prediction_interval_kwh':None,'uncertainty_calibrated':False,'control_enabled':False,'temperature_response_identified':False})
- return {'issued_at':issued_at,'scope':'WHOLE_BUILDING_CONDITIONAL_ESTIMATE','status':'ADVISORY_UNCALIBRATED' if all(r['prediction_kwh'] is not None for r in out) else 'INSUFFICIENT_HOUSEHOLD_DATA','accepted_history_hours':accepted,'rejected_history_hours':rejected,'history_reporting_coverage':None,'provenance':provenance,'recent_profile':profile,'horizon':out,'control_enabled':False,'billing_approved':False,'temperature_used':False,'limitations':['Historical AC-minus-M1 is not synchronised physical measurement','No billing energy derived or gaps reconstructed','Hourly mean used as forecast estimate only','Recent snapshot persistence for unsupported hours is uncalibrated','No workday/holiday dependence or temperature response identified']}
+  correction=None;bias=(error_biases or {}).get(t.astimezone(ZONE).hour)
+  if pred is not None and isinstance(bias,dict) and bias.get('samples',0)>=3 and finite(bias.get('median_error_kwh')):
+   limit=pred*.5;correction=max(-limit,min(limit,bias['median_error_kwh']))
+   pred=max(0,pred+correction);method+=' + damped_recent_error_bias'
+   correction={'applied_kwh':round(correction,6),'samples':bias['samples'],'source':'completed_actual_HA_hours_only'}
+  out.append({'valid_for':target,'prediction_kwh':pred,'method':method,'historical_days':len(vals),'historical_sample_range_kwh':sample_range,'prior_error_correction':correction,'prediction_interval_kwh':None,'uncertainty_calibrated':False,'control_enabled':False,'temperature_response_identified':False})
+ return {'issued_at':issued_at,'scope':'WHOLE_BUILDING_CONDITIONAL_ESTIMATE','status':'ADVISORY_UNCALIBRATED' if all(r['prediction_kwh'] is not None for r in out) else 'INSUFFICIENT_HOUSEHOLD_DATA','accepted_history_hours':accepted,'rejected_history_hours':rejected,'history_reporting_coverage':None,'provenance':provenance,'recent_profile':profile,'horizon':out,'control_enabled':False,'billing_approved':False,'temperature_used':False,'limitations':['Historical AC-minus-M1 is not synchronised physical measurement','No billing energy derived or gaps reconstructed','Hourly mean used as forecast estimate only','Sparse-history fallbacks are uncalibrated','Daily residual correction requires at least three complete actual-hour matches','No workday/holiday dependence or temperature response identified']}
 
-def schedule(states,at,config,options,profile,input_safety,soc_policy):
+def schedule(states,at,config,options,profile,input_safety,soc_policy,history_override=None,error_biases=None):
  from planning_runtime import value
  from deadline_dispatch import simulate_deadlines
  from boiler_offline.g13 import tariff
@@ -111,7 +144,7 @@ def schedule(states,at,config,options,profile,input_safety,soc_policy):
  while t<horizon_end:
   targets.append(t.isoformat())
   t+=timedelta(hours=1)
- forecast_result=forecast(load_history(),profile,at,targets,allow_current=include_current)
+ forecast_result=forecast(history_override if history_override is not None else load_history(),profile,at,targets,allow_current=include_current,error_biases=error_biases)
  if forecast_result['status']!='ADVISORY_UNCALIBRATED':raise ValueError('insufficient_household_observations')
  decisions=[]
  for future_type in ('workday','nonworkday'):
