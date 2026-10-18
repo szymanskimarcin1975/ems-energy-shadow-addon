@@ -99,11 +99,18 @@ def schedule(states,at,config,options,profile,input_safety,soc_policy):
    if not all(finite(v) and v>=0 for v in vals.values()):raise ValueError('invalid_pv')
    if t in pv and pv[t]!=vals:raise ValueError('conflicting_pv')
    pv[t]=vals
- first=(now+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
- targets=[(first+timedelta(hours=i)).isoformat() for i in range(24)]
+ # Cover the next costly window whenever the existing today/tomorrow
+ # Solcast forecast can support it. Never synthesize hours of PV as zero.
  include_current=config.get('include_current_slot') is True
- horizon_end=now+timedelta(hours=24)
- if include_current:targets=[now.isoformat()]+[t for t in targets if stamp(t)<horizon_end]
+ last_pv_hour=max(stamp(t) for t in pv)
+ horizon_end=min(now+timedelta(hours=48),last_pv_hour+timedelta(hours=1))
+ if horizon_end<=now:raise ValueError('no_future_pv_horizon')
+ first=(now+timedelta(hours=1)).replace(minute=0,second=0,microsecond=0)
+ targets=[now.isoformat()] if include_current else []
+ t=first
+ while t<horizon_end:
+  targets.append(t.isoformat())
+  t+=timedelta(hours=1)
  forecast_result=forecast(load_history(),profile,at,targets,allow_current=include_current)
  if forecast_result['status']!='ADVISORY_UNCALIBRATED':raise ValueError('insufficient_household_observations')
  decisions=[]
@@ -114,14 +121,36 @@ def schedule(states,at,config,options,profile,input_safety,soc_policy):
     t=stamp(h['valid_for']);local=t.astimezone(ZONE)
     workday=day if local.date()==now.astimezone(ZONE).date() else ('on' if future_type=='workday' else 'off')
     zone=tariff(t,workday)
-    end=min(t.replace(minute=0,second=0,microsecond=0)+timedelta(hours=1),horizon_end) if include_current else t+timedelta(hours=1)
+    end=min(t.replace(minute=0,second=0,microsecond=0)+timedelta(hours=1),horizon_end)
     hours=(end-t).total_seconds()/3600
     solar_kwh=pv[t.replace(minute=0,second=0,microsecond=0).isoformat()][scenario]*hours
-    # Slot starts at 15:00 and ends at 16:00: target is BEFORE the expensive window.
-    deadline=capacity if workday=='on' and end.astimezone(ZONE).hour==16 and end.astimezone(ZONE).minute==0 else None
-    slots.append(dict(load_kwh=h['prediction_kwh']*hours,pv_kwh=solar_kwh,price_pln_kwh=rates[zone],hours=hours,target_after_kwh=deadline))
+    # Set a demand-based deadline only after observing the full future
+    # 16:00–21:00 costly window (below). Do not force a full battery at 16:00.
+    slots.append(dict(load_kwh=h['prediction_kwh']*hours,pv_kwh=solar_kwh,price_pln_kwh=rates[zone],hours=hours,target_after_kwh=None))
     meta.append(dict(valid_for=t.isoformat(),valid_to=end.isoformat(),hours=hours,tariff=zone,load_kwh=h['prediction_kwh']*hours,pv_kwh=solar_kwh,load_method=h['method']))
-   result=simulate_deadlines(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,float(config['simulation_charge_eff']),float(config['simulation_discharge_eff']))
+   eff_discharge=float(config['simulation_discharge_eff'])
+   # A 16:00 target is proportional to the forecast net demand over the
+   # following five expensive hours, not an unconditional 100% target.
+   for i,item in enumerate(meta):
+    finish=stamp(item['valid_to']).astimezone(ZONE)
+    if finish.hour!=16 or finish.minute!=0:continue
+    deficits=[]
+    for j in range(5):
+     n=i+j+1
+     if n>=len(meta):break
+     next_item=meta[n]
+     begin=stamp(next_item['valid_for']).astimezone(ZONE)
+     if (begin.date()!=finish.date() or begin.hour!=16+j or begin.minute!=0 or
+         next_item['tariff']!='szczyt_popoludniowy' or abs(next_item['hours']-1)>1e-6):break
+     deficits.append(max(slots[n]['load_kwh']-slots[n]['pv_kwh'],0)/eff_discharge)
+    if len(deficits)==5:
+     slots[i]['target_after_kwh']=min(capacity,capacity*minimum/100+sum(deficits))
+   # The energy left at the horizon still has an opportunity value; setting
+   # it to zero would reward Sunday off-peak discharge before Monday peak.
+   # Price-based value discourages gratuitous off-peak cycles after losses,
+   # without rewarding grid charging merely to fill the terminal battery.
+   terminal_value=min(rates.values())
+   result=simulate_deadlines(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,float(config['simulation_charge_eff']),eff_discharge,terminal_value_pln_per_kwh=terminal_value)
    for row,m in zip(result['schedule'],meta):row.update(m,reason='Advisory optimisation from actual historical HA aggregates or observed persistence; not device authority')
    decisions.append(dict(result,scope='CONDITIONAL_WHOLE_BUILDING_NOT_APPROVED',future_day_type=future_type,pv_scenario=scenario))
- return {'forecast':forecast_result,'decisions':decisions,'charge_ceiling_kw':charge,'peak_guard':peak_guard,'planning_min_soc_percent':minimum,'planning_max_soc_percent':100,'pv_issued_at':issued.isoformat(),'control_enabled':False,'prices_contract_verified':False,'workday_soc_deadline':{'local_time':'16:00','target_percent':100,'partial_current_hour_not_modelled':not include_current,'current_deadline_unmodelled':not include_current and day=='on' and now.astimezone(ZONE).hour==15,'physical_feasibility_confirmed':False}}
+ return {'forecast':forecast_result,'decisions':decisions,'charge_ceiling_kw':charge,'peak_guard':peak_guard,'planning_min_soc_percent':minimum,'planning_max_soc_percent':100,'pv_issued_at':issued.isoformat(),'control_enabled':False,'prices_contract_verified':False,'workday_soc_deadline':{'local_time':'16:00','target_percent':None,'policy':'FORECAST_NET_EXPENSIVE_HOURS_ENERGY_NOT_FIXED_100_PERCENT','partial_current_hour_not_modelled':not include_current,'current_deadline_unmodelled':not include_current and day=='on' and now.astimezone(ZONE).hour==15,'physical_feasibility_confirmed':False}}
