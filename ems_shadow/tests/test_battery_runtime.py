@@ -7,8 +7,8 @@ class Tests(unittest.TestCase):
   raw={'state':state,'last_reported':(now-timedelta(seconds=age)).isoformat()}
   keys=('b1_soc','b1_power','b1_status','ac_power','m1_import','m1_export')
   return evaluate({'sensor.example_source':raw},dict.fromkeys(keys,'sensor.example_source'),now)
- def test_fresh_never_enables(self):
-  r=self.report();self.assertFalse(r['commands_enabled']);self.assertEqual(r['state'],'BLOCKED');self.assertIsNone(r['policy']['soc_min'])
+ def test_fresh_never_enables_and_reports_soc_envelope_as_operational(self):
+  r=self.report();self.assertFalse(r['commands_enabled']);self.assertEqual(r['state'],'BLOCKED');self.assertIsNone(r['policy']['ems_operating_soc_min']);self.assertFalse(r['policy']['numeric_bms_soc_bounds_required']);self.assertIn('BMS_DYNAMIC_LIMITS_REQUIRE_LIVE_PREFLIGHT',r['blockers'])
  def test_stale_visible(self):self.assertTrue(self.report(age=1000)['input_issues'])
  def test_future_visible(self):self.assertTrue(self.report(age=-10)['input_issues'])
  def test_unavailable_visible(self):self.assertTrue(self.report('unavailable')['input_issues'])
@@ -67,8 +67,8 @@ class Tests(unittest.TestCase):
 class PlanningTests(unittest.TestCase):
  def test_explicit_owner_range_does_not_grant_safety_authority(self):
   from battery_runtime import planning_policy
-  p=planning_policy({'soc_operating_bounds':{'minimum':0,'maximum':100,'owner_approved':True}})
-  self.assertTrue(p['owner_approved']);self.assertEqual((p['soc_min'],p['soc_max']),(0,100));self.assertFalse(p['bms_safety_confirmed'])
+  p=planning_policy({'soc_operating_bounds':{'minimum':5,'maximum':95,'owner_approved':True}})
+  self.assertTrue(p['owner_approved']);self.assertEqual((p['soc_min'],p['soc_max']),(5,95));self.assertFalse(p['bms_safety_confirmed'])
  def test_no_implicit_default(self):
   from battery_runtime import planning_policy
   for p in (None,{}, {'soc_operating_bounds':{'minimum':0,'maximum':100}}):self.assertFalse(planning_policy(p)['owner_approved'])
