@@ -19,6 +19,13 @@ DOMAIN = "ems_epoch_gateway"
 _LOGGER = logging.getLogger(__name__)
 DATA_GATE = "store"
 
+STOP_SCHEMA = vol.Schema({
+    vol.Required("reason"): cv.string,
+    vol.Optional("request_id"): cv.string,
+    vol.Optional("owner_epoch"): int,
+    vol.Optional("evidence", default={}): dict,
+}, extra=vol.PREVENT_EXTRA)
+
 DISPATCH_SCHEMA = vol.Schema({
     vol.Required("caller"): cv.string,
     vol.Required("operation"): cv.string,
@@ -71,7 +78,38 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
                 "owner_epoch": request.get("owner_epoch", -1),
             }
 
+    async def emergency_stop(call: ServiceCall) -> dict:
+        store: EpochStore | None = hass.data.get(DOMAIN, {}).get(DATA_GATE)
+        if store is None:
+            return {"status": "STOP_NOT_CONFIRMED", "reason": "TRUSTED_GATE_NOT_LOADED",
+                    "new_commands_blocked": True, "active_command_state": "UNKNOWN_ACTIVE_COMMAND",
+                    "active_command_canceled": False, "automatic_resume": False}
+        result = await hass.async_add_executor_job(
+            store.trip_emergency_stop,
+            call.data["reason"],
+            call.data.get("request_id"),
+            call.data.get("owner_epoch"),
+            call.data.get("evidence", {}),
+        )
+        _LOGGER.error("EMS emergency stop latched: %s", result.get("reason"))
+        try:
+            await hass.services.async_call(
+                "persistent_notification", "create",
+                {"title": "EMS2 Emergency STOP",
+                 "message": "EMS2 został zatrzymany i blokuje nowe żądania. Przyczyna: "
+                            + str(result.get("reason"))
+                            + ". Aktywna komenda falownika nie została anulowana; jej stan może wymagać ręcznej weryfikacji.",
+                 "notification_id": "ems2_emergency_stop"},
+                blocking=False,
+            )
+        except Exception:
+            _LOGGER.warning("EMS emergency stop latched; persistent notification unavailable")
+        return result
+
     hass.services.async_register(DOMAIN, "status", status,
+                                 supports_response=SupportsResponse.ONLY)
+    hass.services.async_register(DOMAIN, "emergency_stop", emergency_stop,
+                                 schema=STOP_SCHEMA,
                                  supports_response=SupportsResponse.ONLY)
     hass.services.async_register(DOMAIN, "dispatch", dispatch,
                                  schema=DISPATCH_SCHEMA,
