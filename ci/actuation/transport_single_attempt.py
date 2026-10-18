@@ -25,7 +25,7 @@ async def case(kind):
         finally:
             writer.close();await writer.wait_closed();tasks.discard(asyncio.current_task())
     server=await asyncio.start_server(handle,'127.0.0.1',0)
-    conn=ModbusConnection(ModbusTcpParams('127.0.0.1',server.sockets[0].getsockname()[1]),timeout=.08)
+    conn=ModbusConnection(ModbusTcpParams(host='127.0.0.1',port=server.sockets[0].getsockname()[1]),timeout=.08)
     try:
         try:await conn.for_unit(1).write_register(10,5)
         except Exception:pass
