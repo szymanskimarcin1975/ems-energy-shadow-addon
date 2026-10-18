@@ -22,12 +22,12 @@ class HistoryTests(unittest.TestCase):
   h=history();h['rows'][0]['min']=-1;r=forecast(h,None,T.isoformat(),target());self.assertEqual(r['accepted_history_hours'],71);self.assertEqual(r['rejected_history_hours']['invalid_or_negative_hour'],1)
  def test_no_future_knowledge(self):
   h=history();h['retrieved_at']=(T+timedelta(seconds=1)).isoformat();r=forecast(h,None,T.isoformat(),target());self.assertEqual(r['status'],'INSUFFICIENT_HOUSEHOLD_DATA')
- def test_duplicate_hour_never_adds_day(self):
-  h=history();h['rows']=[h['rows'][0]]*4;r=forecast(h,None,T.isoformat(),target());self.assertEqual(r['accepted_history_hours'],1);self.assertTrue(all(x['prediction_kwh'] is None for x in r['horizon']))
+ def test_duplicate_hour_never_counts_as_multiple_training_days(self):
+  h=history();h['rows']=[h['rows'][0]]*4;r=forecast(h,None,T.isoformat(),target());self.assertEqual(r['accepted_history_hours'],1);self.assertTrue(all(not x['uncertainty_calibrated'] for x in r['horizon']));self.assertTrue(all(x['prediction_kwh'] is not None for x in r['horizon']));self.assertTrue(all(x['historical_days']<=1 for x in r['horizon']))
  def test_missing_hour_not_interpolated(self):
   r=forecast(None,None,T.isoformat(),target());self.assertTrue(all(x['prediction_kwh'] is None for x in r['horizon']))
- def test_recent_observation_is_labelled_estimate(self):
-  r=forecast(None,profile(),T.isoformat(),target());self.assertTrue(all(x['method']=='recent_qualified_snapshot_median_persistence' and x['prediction_kwh']==.75 for x in r['horizon']))
+ def test_recent_observation_is_labelled_uncalibrated_fallback(self):
+  r=forecast(None,profile(),T.isoformat(),target());self.assertTrue(all(x['method']=='recent_qualified_snapshot_persistence_uncalibrated' and x['prediction_kwh']==.75 and not x['uncertainty_calibrated'] for x in r['horizon']))
  def test_stale_recent_not_used(self):
   p=profile();p['observed_end']=(T-timedelta(minutes=5)).isoformat();self.assertEqual(forecast(None,p,T.isoformat(),target())['status'],'INSUFFICIENT_HOUSEHOLD_DATA')
  def test_expired_history_not_used(self):
