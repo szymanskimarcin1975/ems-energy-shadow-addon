@@ -118,8 +118,12 @@ def schedule(states,at,config,options,profile,input_safety,soc_policy,history_ov
   cap=float(raw['state'])
   if not math.isfinite(cap) or cap<0:raise ValueError('peak_charge_value')
   charge=min(charge,cap/1000);peak_guard='EXPOSED_CAP_NOT_DEVICE_AUTHORITY'
- if not soc_policy['owner_approved'] or soc_policy['soc_max']!=100:raise ValueError('approved_planning_range_required')
- minimum=soc_policy['soc_min']
+ if (soc_policy.get('owner_approved') is not True or
+     not finite(soc_policy.get('soc_min')) or not finite(soc_policy.get('soc_max')) or
+     not 0<=soc_policy['soc_min']<soc_policy['soc_max']<=100):
+  raise ValueError('approved_planning_range_required')
+ minimum=soc_policy['soc_min'];maximum=soc_policy['soc_max']
+ ceiling_kwh=capacity*maximum/100
  rates=config['working_rates_pln_kwh']
  if set(rates)!={'dolina','szczyt_przedpoludniowy','szczyt_popoludniowy'} or not all(finite(v) and v>=0 for v in rates.values()):raise ValueError('invalid_prices')
  if stamp(config['rates_effective_from'])>now:raise ValueError('future_prices')
@@ -177,13 +181,13 @@ def schedule(states,at,config,options,profile,input_safety,soc_policy,history_ov
          next_item['tariff']!='szczyt_popoludniowy' or abs(next_item['hours']-1)>1e-6):break
      deficits.append(max(slots[n]['load_kwh']-slots[n]['pv_kwh'],0)/eff_discharge)
     if len(deficits)==5:
-     slots[i]['target_after_kwh']=min(capacity,capacity*minimum/100+sum(deficits))
+     slots[i]['target_after_kwh']=min(ceiling_kwh,capacity*minimum/100+sum(deficits))
    # The energy left at the horizon still has an opportunity value; setting
    # it to zero would reward Sunday off-peak discharge before Monday peak.
    # Price-based value discourages gratuitous off-peak cycles after losses,
    # without rewarding grid charging merely to fill the terminal battery.
    terminal_value=min(rates.values())
-   result=simulate_deadlines(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,float(config['simulation_charge_eff']),eff_discharge,terminal_value_pln_per_kwh=terminal_value)
+   result=simulate_deadlines(slots,capacity,capacity*soc/100,capacity*minimum/100,charge,discharge,float(config['simulation_charge_eff']),eff_discharge,terminal_value_pln_per_kwh=terminal_value,maximum_kwh=ceiling_kwh)
    for row,m in zip(result['schedule'],meta):row.update(m,reason='Advisory optimisation from actual historical HA aggregates or observed persistence; not device authority')
    decisions.append(dict(result,scope='CONDITIONAL_WHOLE_BUILDING_NOT_APPROVED',future_day_type=future_type,pv_scenario=scenario))
- return {'forecast':forecast_result,'decisions':decisions,'charge_ceiling_kw':charge,'peak_guard':peak_guard,'planning_min_soc_percent':minimum,'planning_max_soc_percent':100,'pv_issued_at':issued.isoformat(),'control_enabled':False,'prices_contract_verified':False,'workday_soc_deadline':{'local_time':'16:00','target_percent':None,'policy':'FORECAST_NET_EXPENSIVE_HOURS_ENERGY_NOT_FIXED_100_PERCENT','partial_current_hour_not_modelled':not include_current,'current_deadline_unmodelled':not include_current and day=='on' and now.astimezone(ZONE).hour==15,'physical_feasibility_confirmed':False}}
+ return {'forecast':forecast_result,'decisions':decisions,'charge_ceiling_kw':charge,'peak_guard':peak_guard,'planning_min_soc_percent':minimum,'planning_max_soc_percent':maximum,'pv_issued_at':issued.isoformat(),'control_enabled':False,'prices_contract_verified':False,'workday_soc_deadline':{'local_time':'16:00','target_percent':None,'policy':'FORECAST_NET_EXPENSIVE_HOURS_ENERGY_NOT_FIXED_100_PERCENT','partial_current_hour_not_modelled':not include_current,'current_deadline_unmodelled':not include_current and day=='on' and now.astimezone(ZONE).hour==15,'physical_feasibility_confirmed':False}}
