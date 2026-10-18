@@ -264,6 +264,30 @@ class AdapterTests(unittest.IsolatedAsyncioTestCase):
             await self.adapter.preflight(request())
         self.assertFalse(self.calls)
 
+    async def test_post_write_poll_confirms_mode_and_b1_effect_not_only_ha_ack(self):
+        req=request(); power=700
+        await self.adapter.apply(req,power)
+        task=asyncio.create_task(self.adapter.confirm_effect(req,power))
+        await asyncio.sleep(0)
+        c=self.hub.inverters[0].storage_control_data
+        c.command_mode=2; c.charge_limit=power; c.command_timeout=30
+        self.hub.batteries[0].battery_data.B_DC_Power=650
+        self.now=time.time(); self.adapter.capture_poll()
+        result=await task
+        self.assertTrue(result['physical_effect_confirmed'])
+        self.assertEqual(result['request_id'],req['request_id'])
+        self.assertFalse(result['no_export_physically_proven'])
+    async def test_power_above_limit_is_not_confirmed_from_service_success(self):
+        req=request(); power=700
+        await self.adapter.apply(req,power)
+        task=asyncio.create_task(self.adapter.confirm_effect(req,power))
+        await asyncio.sleep(0)
+        c=self.hub.inverters[0].storage_control_data
+        c.command_mode=2; c.charge_limit=power; c.command_timeout=30
+        self.hub.batteries[0].battery_data.B_DC_Power=3000
+        self.now=time.time(); self.adapter.capture_poll()
+        self.assertFalse((await task)['physical_effect_confirmed'])
+
 
 class PlanAuthorityTests(unittest.TestCase):
     def setUp(self):
