@@ -14,6 +14,16 @@ from control_safety import Safety
 from dispatch_simulator import simulate
 from boiler_offline.g13 import tariff,ZONE
 
+def planning_fingerprint(config, soc_policy, options):
+    """Hash reviewed inputs, independent of whether this run reached simulation.
+
+    A changed digest still requires explicit review and executor pinning.
+    """
+    policy = {k: v for k, v in soc_policy.items() if k != 'applied_to_simulation'}
+    basis = dict(planning=config, approved_soc_planning=policy,
+                 observation=options['observation'], legacy_sources=options['sources'])
+    return hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()
+
 def value(states,entity,unit,at,age=240):
     s=states[entity]
     if s.get('attributes',{}).get('unit_of_measurement')!=unit:raise ValueError('unit_mismatch')
@@ -260,7 +270,7 @@ class Planner:
         if isinstance(household,dict):household['forecast_feedback']={'matched_completed_hours':reconciled,
             'persisted_future_forecasts':stored_forecasts,'bias_hours_available':len(biases),
             'bias_minimum_distinct_days':3,'bias_window_days':30,'calibrated_for_control':False}
-        digest=hashlib.sha256(json.dumps(dict(planning=config,approved_soc_planning=record['planning_soc_policy'],observation=options['observation'],legacy_sources=options['sources']),sort_keys=True).encode()).hexdigest()
+        digest=planning_fingerprint(config, record['planning_soc_policy'], options)
         record['planning_config_fingerprint']=digest
         self.c.execute('BEGIN IMMEDIATE')
         try:
