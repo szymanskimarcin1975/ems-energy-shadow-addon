@@ -21,7 +21,7 @@ jobs:
       - run: python ci/mcp_prepare/test_watchdog.py
       - run: python -m compileall -q tools/mcp_prepare
   real-ha-mcp-oauth:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/prepare/mcp-solaredge-service'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
