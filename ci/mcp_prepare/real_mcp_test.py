@@ -51,6 +51,12 @@ async def main(phase):
   hass.data['oidc_provider']={'jwt_public_key':key.public_key(),'clients':{}}
   await hass.async_start();await hass.async_block_till_done();check('real_HA_running',hass.is_running)
   issuer='https://synthetic.invalid';resource=issuer+'/api/mcp_http'
+  device_calls=[]
+  original_service_call=hass.services.async_call
+  async def audited_service_call(domain,service,*args,**kwargs):
+   if domain in ('select','number','solaredge_modbus_multi','ems_epoch_gateway'):device_calls.append((domain,service))
+   return await original_service_call(domain,service,*args,**kwargs)
+  hass.services.async_call=audited_service_call
   tokens=[]
   def token(user,**changes):
    claims=dict(sub=user.id,iat=int(time.time()),exp=int(time.time())+600,iss=issuer+'/oidc',aud=resource);claims.update(changes)
@@ -131,7 +137,7 @@ async def main(phase):
      # Corrupt only the isolated BACKUP, never the source.
      (CONFIG/'ems_prepare_backups'/ID/'original/hub.py').write_text('synthetic corrupted backup')
      _,bad=await call('ems_admin_solaredge_prepare_status',ID);check('corruption_detected',bad['status']=='UNKNOWN')
-     check('no_device_services',not hass.services.has_service('select','select_option') and not hass.services.has_service('number','set_value'))
+     check('zero_device_service_calls',device_calls==[])
     else:
      _,a=await call('ems_admin_solaredge_prepare_status',ID);check('restart_preserves_integrity_failure',a['status']=='UNKNOWN')
      _,a=await call('ems_admin_solaredge_prepare_status',DISCONNECT);check('restart_existing_copy_integrity',a['status']=='COMPLETE')
@@ -147,4 +153,4 @@ if __name__=='__main__':
  else:
   try:asyncio.run(main(sys.argv[1]))
   except Exception:
-   (OUT/(sys.argv[1]+'-failure.txt')).write_text(traceback.format_exc());raise
+   (OUT/(sys.argv[1]+'-failure.txt')).write_text(traceback.format_exc());print(traceback.format_exc(),flush=True);raise

@@ -51,6 +51,7 @@ jobs:
         run: |
           python ci/mcp_prepare/reconstruct_base.py mcp-upstream/custom_components/mcp_server_http_transport mcp-base
           python tools/mcp_prepare/build_package.py --source mcp-base --output mcp-package
+          python ci/mcp_prepare/test_installer.py mcp-base
           cd mcp-package
           sha256sum -c SHA256SUMS
       - name: Install isolated HA and its exact default requirements

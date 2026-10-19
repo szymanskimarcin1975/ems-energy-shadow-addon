@@ -27,7 +27,11 @@ def build(source,output):
         with zipfile.ZipFile(output/name,'w',compression=zipfile.ZIP_DEFLATED) as z:
             for path,data in sorted(entries.items()):
                 info=zipfile.ZipInfo('custom_components/mcp_server_http_transport/'+path,(2026,10,19,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED;info.external_attr=0o100600<<16;z.writestr(info,data)
-    (output/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in sorted(output.glob('*.zip'))))
+    (output/'install.sh').write_bytes((ROOT/'install.sh').read_bytes())
+    for name,entries in [('BASE_SHA256SUMS',files),('CANDIDATE_SHA256SUMS',changed)]:
+        (output/name).write_text(''.join(hashlib.sha256(data).hexdigest()+'  ./'+path+'\n' for path,data in sorted(entries.items())))
+    (output/'BASE_FILELIST').write_text(''.join('./'+path+'\n' for path in sorted(files)))
+    (output/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in sorted(output.iterdir()) if p.is_file()))
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--source',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);a=parser.parse_args();build(a.source,a.output)
