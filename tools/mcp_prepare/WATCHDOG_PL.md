@@ -1,6 +1,8 @@
 # Jednorazowy watchdog MCP — przygotowanie, NIE zgoda na instalację
 
-Nie zmienia SolarEdge, EMS2, CWU, G13, OAuth, .storage ani SQLite. Działa w
+Nie zmienia SolarEdge, EMS2, CWU, G13 ani SQLite. Nie edytuje bezpośrednio
+.storage. Po zgodzie może odwołać wyłącznie własnego nowego klienta OAuth,
+przez oficjalną usługę; pozostałych klientów nie zmienia. Działa w
 Terminal & SSH, poza Core. Brak nowych portów. Nie zastępuje dostępu awaryjnego.
 
 ## Warunki przed uruchomieniem
@@ -14,7 +16,7 @@ Terminal & SSH, poza Core. Brak nowych portów. Nie zastępuje dostępu awaryjne
 3. Osobno autoryzowany, krótko żyjący token OAuth aktywnego administratora dla
    istniejącego zasobu MCP. Nie używać tokenu z ChatGPT ani zwykłego tokenu HA
    jako zamiennika. Nie zmieniać konfiguracji OAuth ani nie obchodzić wydawania
-   tokenów. Istnienie bezpiecznej ścieżki jego uzyskania NIE JEST potwierdzone.
+   tokenów. Nowy przepływ przeglądarkowy wymaga zgody i potwierdzenia na produkcji.
 4. Prywatny plik oauth-probe.json w katalogu recovery, właściciel=proces dodatku,
    tryb0600, cztery pola: access_token, public_origin, client_id, client_name.
    Wyłącznie nowy klient z aud=client_id, scope openid, TTL<=3600s; patrz AUTHORIZATION_PL.md. Token musi wystarczyć na cały test, powrót i margines czasu.

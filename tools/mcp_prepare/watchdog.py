@@ -1,7 +1,8 @@
 """One-shot CODE-only deployment supervisor. No device services or data restore.
 
 Requires an independently provisioned OAuth probe. Never mints/reuses ChatGPT
-credentials, changes OAuth configuration, or accepts an unauthenticated 200.
+credentials or accepts an unauthenticated 200. Only its newly approved dedicated
+client may be revoked after completion; existing OAuth clients are untouched.
 """
 import fcntl
 import hashlib
