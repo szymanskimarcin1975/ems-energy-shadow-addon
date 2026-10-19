@@ -18,6 +18,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python tools/mcp_prepare/test_prepare.py -v
+      - run: python ci/mcp_prepare/test_watchdog.py
       - run: python -m compileall -q tools/mcp_prepare
   real-ha-mcp-oauth:
     if: github.event_name == 'pull_request'
@@ -53,6 +54,7 @@ jobs:
           python ci/mcp_prepare/reconstruct_base.py mcp-upstream/custom_components/mcp_server_http_transport mcp-base
           python tools/mcp_prepare/build_package.py --source mcp-base --output mcp-package
           python ci/mcp_prepare/test_installer.py mcp-base
+          python tools/mcp_prepare/build_watchdog.py mcp-package mcp-watchdog-package
           cd mcp-package
           sha256sum -c SHA256SUMS
       - name: Install isolated HA and its exact default requirements
@@ -90,4 +92,6 @@ jobs:
           path: |
             mcp-package/
             mcp-evidence/
+            mcp-watchdog-package/
+            mcp-watchdog-package.zip
           retention-days: 30

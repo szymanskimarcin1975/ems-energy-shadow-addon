@@ -15,9 +15,9 @@ def prepare():
  shutil.copytree(ROOT/'oidc-upstream/custom_components/oidc_provider',cc/'oidc_provider')
  shutil.copytree(ROOT/'solar-upstream/custom_components/solaredge_modbus_multi',cc/'solaredge_modbus_multi')
 
-def entry(domain,data,disabled=False):
+def entry(domain,data,disabled=False,entry_id=None):
  from homeassistant.config_entries import ConfigEntry,ConfigEntryDisabler
- return ConfigEntry(version=1,minor_version=1,domain=domain,title='Isolated '+domain,data=data,options={},source='user',unique_id='isolated-'+domain,discovery_keys=MappingProxyType({}),subentries_data=None,disabled_by=ConfigEntryDisabler.USER if disabled else None)
+ return ConfigEntry(version=1,minor_version=1,domain=domain,title='Isolated '+domain,data=data,options={},source='user',unique_id='isolated-'+domain,discovery_keys=MappingProxyType({}),subentries_data=None,disabled_by=ConfigEntryDisabler.USER if disabled else None,**({'entry_id':entry_id} if entry_id else {}))
 
 async def main(phase):
  import aiohttp,jwt
@@ -42,6 +42,11 @@ async def main(phase):
    await hass.config_entries.async_add(entry('oidc_provider',{},True))
    mcp=entry('mcp_server_http_transport',{'native_auth_enabled':False,'server_name':'isolated-ci'})
    await hass.config_entries.async_add(mcp);check('real_MCP_loaded',str(mcp.state)=='ConfigEntryState.LOADED')
+   solar=entry('solaredge_modbus_multi',{},True,entry_id='01M39WCJ1Y5FQTXXR2FZJBV76K')
+   await hass.config_entries.async_add(solar)
+   from homeassistant.helpers import entity_registry as er
+   er.async_get(hass).async_get_or_create('select','solaredge_modbus_multi','synthetic_storage_control_mode',config_entry=solar)
+
    key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
    (CONFIG/'synthetic-key.pem').write_bytes(key.private_bytes(serialization.Encoding.PEM,serialization.PrivateFormat.PKCS8,serialization.NoEncryption()))
    (CONFIG/'test-identities.json').write_text(json.dumps(dict(admin=admin.id,other=other.id,inactive=inactive.id)))
@@ -74,6 +79,27 @@ async def main(phase):
    (OUT/(phase+'-tool-names.json')).write_text(json.dumps(sorted(names)))
    check('tools_list_correct',NAMES.issubset(names) if phase!='rollback' else not NAMES.intersection(names))
    check('old_tools_retained',{'ems_admin_options_inspect','get_state','call_service'}.issubset(names))
+   # Watchdog client runs in an independent worker, real HTTP + OAuth validator.
+   # Supervisor proxy is mapped to real HA REST API; no Supervisor in CI.
+   import importlib.util
+   spec=importlib.util.spec_from_file_location('watchdog_under_test',ROOT/'tools/mcp_prepare/watchdog.py')
+   wd=importlib.util.module_from_spec(spec);spec.loader.exec_module(wd)
+   probe=wd.Health.__new__(wd.Health)
+   import urllib.request
+   probe.http=urllib.request.build_opener(urllib.request.ProxyHandler({}),wd.NoRedirect())
+   probe.host='synthetic.invalid';probe.credentials={'access_token':token(admin)}
+   refresh=await hass.auth.async_create_refresh_token(admin)
+   api_token=hass.auth.async_create_access_token(refresh);tokens.append(api_token)
+   probe.supervisor_token=api_token
+   original_request=probe.request
+   def local_request(url,body=None,headers=None):
+    url=url.replace('http://supervisor/core/api/','http://127.0.0.1:8123/api/').replace('http://homeassistant:8123/','http://127.0.0.1:8123/')
+    return original_request(url,body,headers)
+   probe.request=local_request
+   check('watchdog_independent_authenticated_MCP_API_admin_read',await asyncio.to_thread(probe,phase!='rollback'))
+   probe.credentials={'access_token':token(admin,exp=int(time.time())-1)}
+   check('watchdog_expired_OAuth_rejected',not await asyncio.to_thread(probe,phase!='rollback'))
+
    for auth in ({},headers(admin,exp=int(time.time())-1),headers(admin,aud='wrong-resource')):
     status,_=await rpc('tools/list',auth=auth);check('invalid_token_denied',status==401)
    async def call(name,id,auth=None,extra=None):
