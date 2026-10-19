@@ -52,11 +52,10 @@ async def main(phase):
   await hass.async_start();await hass.async_block_till_done();check('real_HA_running',hass.is_running)
   issuer='https://synthetic.invalid';resource=issuer+'/api/mcp_http'
   device_calls=[]
-  original_service_call=hass.services.async_call
-  async def audited_service_call(domain,service,*args,**kwargs):
-   if domain in ('select','number','solaredge_modbus_multi','ems_epoch_gateway'):device_calls.append((domain,service))
-   return await original_service_call(domain,service,*args,**kwargs)
-  hass.services.async_call=audited_service_call
+  def audit_service_event(event):
+   if event.data.get('domain') in ('select','number','solaredge_modbus_multi','ems_epoch_gateway'):
+    device_calls.append((event.data['domain'],event.data.get('service')))
+  hass.bus.async_listen('call_service',audit_service_event)
   tokens=[]
   def token(user,**changes):
    claims=dict(sub=user.id,iat=int(time.time()),exp=int(time.time())+600,iss=issuer+'/oidc',aud=resource);claims.update(changes)
