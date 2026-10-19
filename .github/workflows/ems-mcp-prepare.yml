@@ -19,3 +19,73 @@ jobs:
           python-version: '3.12'
       - run: python tools/mcp_prepare/test_prepare.py -v
       - run: python -m compileall -q tools/mcp_prepare
+  real-ha-mcp-oauth:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ganhammar/hass-mcp-server
+          ref: 603a10ed464c6b58b625571cc778cb4adbcf896e
+          path: mcp-upstream
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ganhammar/hass-oidc-server
+          ref: fccf769b56d2cc3fdc06d6b38bcdc3e96ab2c86c
+          path: oidc-upstream
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: WillCodeForCats/solaredge-modbus-multi
+          ref: d38d890887684ddd7938c4bce5223d387b24c6a7
+          path: solar-upstream
+          persist-credentials: false
+      - name: Reconstruct verified ems.1 base and build update plus code recovery
+        run: |
+          python ci/mcp_prepare/reconstruct_base.py mcp-upstream/custom_components/mcp_server_http_transport mcp-base
+          python tools/mcp_prepare/build_package.py --source mcp-base --output mcp-package
+          cd mcp-package
+          sha256sum -c SHA256SUMS
+      - name: Install isolated HA and its exact default requirements
+        run: |
+          python -m pip install homeassistant==2026.10.0 PyJWT python-dateutil
+          python - <<'PY'
+          import json,subprocess,sys
+          from pathlib import Path
+          import homeassistant
+          root=Path(next(iter(homeassistant.__path__)))/'components'
+          domains=['frontend','infrared','radio_frequency','ffmpeg','analytics','conversation','tts','stream','camera']
+          requirements=sorted({q for d in domains for q in json.loads((root/d/'manifest.json').read_text()).get('requirements',[])})
+          subprocess.check_call([sys.executable,'-m','pip','install',*requirements])
+          PY
+      - name: Actual HA HTTP MCP OAuth boundary and interrupted request
+        run: |
+          python ci/mcp_prepare/real_mcp_test.py prepare
+          python ci/mcp_prepare/real_mcp_test.py candidate
+      - name: Restart same isolated HA and reconcile existing operations
+        run: python ci/mcp_prepare/real_mcp_test.py restart
+      - name: Code-only rollback preserves identities and data
+        run: |
+          python - <<'PY'
+          import shutil,zipfile
+          from pathlib import Path
+          component=Path('isolated-ha/custom_components/mcp_server_http_transport')
+          shutil.move(component,component.with_name('candidate-preserved'))
+          with zipfile.ZipFile('mcp-package/mcp-1.18.0-ems.1-code-recovery.zip') as z:z.extractall('isolated-ha')
+          PY
+          python ci/mcp_prepare/real_mcp_test.py rollback
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcp-ems2-prepare-package-and-evidence
+          path: |
+            mcp-package/
+            mcp-evidence/
+          retention-days: 30
