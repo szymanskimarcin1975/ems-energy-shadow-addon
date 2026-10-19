@@ -15,6 +15,27 @@ class AddonTests(unittest.TestCase):
   self.assertEqual(requests,[{'action':'status'},{'action':'preflight'}]);self.assertEqual(left,'')
  def test_oversize_stdin_refused(self):
   with self.assertRaises(ValueError):a.decode_requests('',b'x'*8193)
+ def test_status_without_deployment_is_explicit(self):
+  import types
+  fake=types.SimpleNamespace(BACK=Path('/missing'),status=MagicMock(side_effect=FileNotFoundError))
+  with patch.dict('sys.modules',{'manual_ack_watchdog':fake}):
+   self.assertEqual(a.Controller().handle({'action':'status'}),{'phase':'IDLE_NO_DEPLOYMENT_RECORD'})
+ def test_startup_message_is_present_and_unbuffered(self):
+  self.assertIn('READY_PACKAGE_VERIFIED_WAITING_FOR_REQUEST_NO_APPLY',(ROOT/'mcp_installer/runner.py').read_text())
+  self.assertIn('PYTHONUNBUFFERED=1',(ROOT/'mcp_installer/Dockerfile').read_text())
+ def test_read_only_stage_reopen_and_tamper_refusal(self):
+  with tempfile.TemporaryDirectory() as t:
+   root=Path(t);p=root/'package.zip';st=root/'stage';st.mkdir()
+   with zipfile.ZipFile(p,'w') as z:
+    for name in a.ALLOWED:z.writestr('package/'+name,'content-'+name);(st/name).write_text('content-'+name)
+   sha=hashlib.sha256(p.read_bytes()).hexdigest()
+   with patch.object(a,'PACKAGE',p),patch.object(a,'STAGE',st):
+    a.stage(sha)
+    (st/'ack.sh').write_text('tampered')
+    with self.assertRaises(ValueError):a.stage(sha)
+ def test_report_publication_contains_no_credentials(self):
+  with tempfile.TemporaryDirectory() as t,patch.object(a,'REPORT',Path(t)/'status.yaml'),patch.object(a,'snapshot',return_value={'phase':'IDLE_NO_DEPLOYMENT_RECORD','worker_running':False}):
+   a.publish(a.Controller());self.assertEqual(json.loads(a.REPORT.read_text())['phase'],'IDLE_NO_DEPLOYMENT_RECORD')
  def test_permissions_and_no_public_listener(self):
   text=(ROOT/'mcp_installer/config.yaml').read_text()
   for x in ('homeassistant_api: true','hassio_api: true','hassio_role: manager','boot: manual','path: /config'):self.assertIn(x,text)

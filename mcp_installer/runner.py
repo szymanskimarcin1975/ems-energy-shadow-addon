@@ -5,6 +5,7 @@ import hashlib,json,os,re,shutil,subprocess,sys,threading,zipfile
 from pathlib import Path
 PACKAGE=Path('/app/package.zip')
 STAGE=Path('/data/package')
+REPORT=Path('/config/mcp_installer_status.yaml')
 ALLOWED={'install.sh','manual-ack-launch.sh','manual_ack_watchdog.py','deployment_core.py','ack.sh','diagnostic_verifier.py','MANUAL_ACK_PL.md','BASE_FILELIST','BASE_SHA256SUMS','CANDIDATE_SHA256SUMS','SHA256SUMS','mcp-1.18.0-ems.2-prepare.zip','mcp-1.18.0-ems.1-code-recovery.zip'}
 
 def stage(expected):
@@ -12,7 +13,18 @@ def stage(expected):
  if PACKAGE.is_symlink() or PACKAGE.stat().st_size>20_000_000:raise ValueError('PACKAGE_REFUSED')
  data=PACKAGE.read_bytes()
  if hashlib.sha256(data).hexdigest()!=expected:raise ValueError('PACKAGE_SHA_MISMATCH')
- if STAGE.exists():raise ValueError('EXISTING_STAGE_NO_REPLAY')
+ if STAGE.is_symlink():raise ValueError("STAGE_SYMLINK_REFUSED")
+ if STAGE.exists():
+  # Reopening is read-only, not replay: require exact byte identity of every file.
+  with zipfile.ZipFile(__import__('io').BytesIO(data)) as z:
+   members={Path(i.filename).name:i for i in z.infolist()}
+   actual={p.name for p in STAGE.iterdir()}
+   if set(members)!=ALLOWED or actual!=ALLOWED:raise ValueError('EXISTING_STAGE_CHANGED')
+   for name,i in members.items():
+    target=STAGE/name
+    if target.is_symlink() or not target.is_file() or target.read_bytes()!=z.read(i):raise ValueError('EXISTING_STAGE_CHANGED')
+  sys.path.insert(0,str(STAGE))
+  return
  STAGE.mkdir(mode=0o700)
  try:
   import io,stat
@@ -46,12 +58,41 @@ class Controller:
    return {'status':'STARTED_NOT_CONFIRMED'}
   if a=='status' and set(r)=={'action'}:
    import manual_ack_watchdog as w
-   return w.status(w.BACK)
+   try:return w.status(w.BACK)
+   except FileNotFoundError:return {'phase':'IDLE_NO_DEPLOYMENT_RECORD'}
   if a=='ack' and set(r)=={'action','operation','challenge','checks'}:
    import manual_ack_watchdog as w
    w.write_ack(STAGE,w.BACK,w.SOURCE,r['operation'],r['challenge'],r['checks'])
    return {'status':'ACK_RECORDED_NOT_YET_ACCEPTED'}
   raise ValueError('UNSUPPORTED_ACTION')
+
+def snapshot(controller):
+ try:state=controller.handle({'action':'status'})
+ except Exception:state={'phase':'STATUS_UNAVAILABLE_DO_NOT_DEPLOY'}
+ state['worker_running']=bool(controller.worker and controller.worker.poll() is None)
+ state['worker_exit_code']=None if controller.worker is None else controller.worker.poll()
+ return state
+
+def publish(controller):
+ # Fixed path JSON (valid YAML); no token, HTTP body or exception details.
+ import tempfile
+ value=snapshot(controller)
+ fd,name=tempfile.mkstemp(prefix='.mcp-installer-status-',dir=REPORT.parent)
+ try:
+  with os.fdopen(fd,'w') as f:json.dump(value,f);f.flush();os.fsync(f.fileno())
+  os.replace(name,REPORT)
+ finally:
+  if os.path.exists(name):os.unlink(name)
+ return value
+
+def monitor(controller):
+ previous=None
+ while True:
+  try:
+   value=publish(controller)
+   if value!=previous:print('INSTALLER_STATUS '+json.dumps(value),flush=True);previous=value
+  except Exception:print('STATUS_REPORT_UNAVAILABLE',flush=True)
+  threading.Event().wait(2)
 
 def decode_requests(buffer,chunk):
  buffer+=chunk.decode('utf-8')
@@ -70,6 +111,8 @@ def main():
  except Exception:
   print('BLOCKED_PACKAGE_OR_OPTIONS');return 1
  c=Controller();buffer=""
+ print("READY_PACKAGE_VERIFIED_WAITING_FOR_REQUEST_NO_APPLY",flush=True)
+ threading.Thread(target=monitor,args=(c,),daemon=True).start()
  # EOF never stops the watchdog's container: Supervisor/Core can disconnect.
  while True:
   line=os.read(sys.stdin.fileno(),8192)
