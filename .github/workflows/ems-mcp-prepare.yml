@@ -1,0 +1,21 @@
+name: EMS bounded MCP PREPARE checks
+on:
+  push:
+    paths: ['tools/mcp_prepare/**', '.github/workflows/ems-mcp-prepare.yml']
+  pull_request:
+    paths: ['tools/mcp_prepare/**', '.github/workflows/ems-mcp-prepare.yml']
+permissions:
+  contents: read
+jobs:
+  prepare-no-shell:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/mcp_prepare/test_prepare.py -v
+      - run: python -m compileall -q tools/mcp_prepare
