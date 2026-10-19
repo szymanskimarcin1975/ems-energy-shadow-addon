@@ -11,10 +11,11 @@ Są to szerokie uprawnienia serwisowe, nie sandbox per plik. Kontener i
 zatwierdzony pakiet są zaufanym kodem. Nie uruchamiać obcych pakietów.
 
 ## Wdrożenie po osobnej zgodzie
-1. Zainstalować lokalny dodatek z załączonego katalogu mcp_installer, bez
-   zmieniania EMS SHADOW. Nie scalać PR ani nie używać niezatwierdzonego main.
-2. Umieścić zweryfikowany mcp-installer-package.zip w /config i wpisać jego
-   SHA-256 w opcji package_sha256. Zachować dotychczasowy katalog recovery.
+1. W sklepie dodatków dodać adres repozytorium z gałęzią #mcp-installer.
+   Zainstalować wyłącznie MCP Controlled Installer.
+2. Pakiet jest już w obrazie, sprawdzany podczas budowy i uruchomienia.
+   Nie trzeba przenosić plików ani wpisywać poleceń w terminalu. Zachować
+   domyślny SHA-256 oraz istniejący katalog kopii recovery w /config.
 3. Uruchomić dodatek. Sam start NIE wykonuje instalacji ani restartu Core.
 4. Przez administracyjną usługę hassio.addon_stdin dla tego dodatku przesłać:
    addon: local_mcp_controlled_installer oraz input: {"action":"preflight"}. Odczytać log: wszystkie kontrole muszą być PASS.

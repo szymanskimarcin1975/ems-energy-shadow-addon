@@ -15,6 +15,6 @@ map:
     read_only: false
     path: /config
 options:
-  package_sha256: ""
+  package_sha256: "6fbed7a7e47488e6ad6e375635650c33eabaed510b91e0c4d0066e139aaca52f"
 schema:
   package_sha256: str

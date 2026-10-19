@@ -3,7 +3,7 @@ Package is immutable during a worker operation. Never automatically resumes.
 """
 import hashlib,json,os,re,shutil,subprocess,sys,threading,zipfile
 from pathlib import Path
-PACKAGE=Path('/config/mcp-installer-package.zip')
+PACKAGE=Path('/app/package.zip')
 STAGE=Path('/data/package')
 ALLOWED={'install.sh','manual-ack-launch.sh','manual_ack_watchdog.py','deployment_core.py','ack.sh','diagnostic_verifier.py','MANUAL_ACK_PL.md','BASE_FILELIST','BASE_SHA256SUMS','CANDIDATE_SHA256SUMS','SHA256SUMS','mcp-1.18.0-ems.2-prepare.zip','mcp-1.18.0-ems.1-code-recovery.zip'}
 
