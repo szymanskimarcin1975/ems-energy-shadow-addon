@@ -153,7 +153,7 @@ class ManualACK(unittest.TestCase):
    return True
   self.hook=self.ready_ack;self.assertTrue(self.controller(health=health).execute())
  def test_default_ack_window_is_fifteen_minutes(self):
-  self.assertEqual(w.ManualDeployment.__init__.__defaults__[0],900)
+  self.assertEqual(w.ManualDeployment.__init__.__kwdefaults__['ack_seconds'],900)
  def test_delayed_core_api_recovery_then_owner_ack(self):
   checks=0
   def health(candidate):
