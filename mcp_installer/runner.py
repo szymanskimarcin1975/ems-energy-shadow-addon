@@ -53,19 +53,33 @@ class Controller:
    return {'status':'ACK_RECORDED_NOT_YET_ACCEPTED'}
   raise ValueError('UNSUPPORTED_ACTION')
 
+def decode_requests(buffer,chunk):
+ buffer+=chunk.decode('utf-8')
+ if len(buffer)>8192:raise ValueError('INPUT_TOO_LARGE')
+ result=[];decoder=json.JSONDecoder()
+ while buffer.strip():
+  buffer=buffer.lstrip()
+  try:value,end=decoder.raw_decode(buffer)
+  except json.JSONDecodeError:break
+  result.append(value);buffer=buffer[end:]
+ return result,buffer
+
 def main():
  try:
   options=json.loads(Path('/data/options.json').read_text());stage(options['package_sha256'])
  except Exception:
   print('BLOCKED_PACKAGE_OR_OPTIONS');return 1
- c=Controller()
+ c=Controller();buffer=""
  # EOF never stops the watchdog's container: Supervisor/Core can disconnect.
  while True:
-  line=sys.stdin.readline(8193)
+  line=os.read(sys.stdin.fileno(),8192)
   if not line:
    threading.Event().wait(1);continue
   try:
-   if len(line)>8192:raise ValueError()
-   print(json.dumps(c.handle(json.loads(line))))
-  except Exception:print('REQUEST_BLOCKED_NO_SECRET_DETAILS')
+   requests,buffer=decode_requests(buffer,line)
+   for request in requests:
+    try:print(json.dumps(c.handle(request)))
+    except Exception:print('REQUEST_BLOCKED_NO_SECRET_DETAILS')
+  except Exception:
+   buffer='';print('REQUEST_BLOCKED_NO_SECRET_DETAILS')
 if __name__=='__main__':sys.exit(main())

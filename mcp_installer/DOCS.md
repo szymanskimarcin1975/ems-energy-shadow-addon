@@ -17,7 +17,7 @@ zatwierdzony pakiet są zaufanym kodem. Nie uruchamiać obcych pakietów.
    SHA-256 w opcji package_sha256. Zachować dotychczasowy katalog recovery.
 3. Uruchomić dodatek. Sam start NIE wykonuje instalacji ani restartu Core.
 4. Przez administracyjną usługę hassio.addon_stdin dla tego dodatku przesłać:
-   {"action":"preflight"}. Odczytać log: wszystkie kontrole muszą być PASS.
+   addon: local_mcp_controlled_installer oraz input: {"action":"preflight"}. Odczytać log: wszystkie kontrole muszą być PASS.
 5. Dopiero po osobnej zgodzie na restart przesłać:
    {"action":"deploy","confirmation":"CONFIRM_CORE_RESTART"}.
 6. Po powrocie Nabu Casa sprawdzić istniejący OAuth, stare i oba nowe narzędzia,

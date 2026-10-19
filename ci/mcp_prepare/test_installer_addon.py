@@ -5,6 +5,16 @@ from unittest.mock import patch,MagicMock
 ROOT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('addon',ROOT/'mcp_installer/runner.py');a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
 class AddonTests(unittest.TestCase):
+ def test_supervisor_json_without_newline_is_processed(self):
+  requests,left=a.decode_requests('',b'{"action":"preflight"}')
+  self.assertEqual(requests,[{'action':'preflight'}]);self.assertEqual(left,'')
+ def test_split_stdin_and_multiple_messages(self):
+  requests,left=a.decode_requests('',b'{"action":')
+  self.assertEqual(requests,[])
+  requests,left=a.decode_requests(left,b'"status"}{"action":"preflight"}')
+  self.assertEqual(requests,[{'action':'status'},{'action':'preflight'}]);self.assertEqual(left,'')
+ def test_oversize_stdin_refused(self):
+  with self.assertRaises(ValueError):a.decode_requests('',b'x'*8193)
  def test_permissions_and_no_public_listener(self):
   text=(ROOT/'mcp_installer/config.yaml').read_text()
   for x in ('homeassistant_api: true','hassio_api: true','hassio_role: manager','boot: manual','path: /config'):self.assertIn(x,text)
