@@ -152,6 +152,31 @@ class ManualACK(unittest.TestCase):
    if c:count+=1;return count>2
    return True
   self.hook=self.ready_ack;self.assertTrue(self.controller(health=health).execute())
+ def test_default_ack_window_is_fifteen_minutes(self):
+  self.assertEqual(w.ManualDeployment.__init__.__defaults__[0],900)
+ def test_delayed_core_api_recovery_then_owner_ack(self):
+  checks=0
+  def health(candidate):
+   nonlocal checks
+   if candidate:
+    checks+=1
+    return checks>3
+   return True
+  self.hook=self.ready_ack
+  self.assertTrue(self.controller(health=health).execute())
+  self.assertEqual(self.state()['phase'],'SUCCESS_ACK_CONSUMED')
+  self.assertEqual(self.calls.count('start'),1)
+ def test_delayed_core_api_recovery_without_ack_rolls_back_once(self):
+  checks=0
+  def health(candidate):
+   nonlocal checks
+   if candidate:
+    checks+=1
+    return checks>3
+   return True
+  self.assertFalse(self.controller(health=health).execute())
+  self.assertEqual(self.state()['phase'],'ROLLED_BACK_API_ONLY_MCP_UNVERIFIED')
+  self.assertEqual(self.calls.count('start'),2)
  def test_unknown_supervisor_stop_never_swaps(self):
   def core(a):
    self.calls.append(a)
