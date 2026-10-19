@@ -94,6 +94,8 @@ def run(config_root,operation_id,action,expected=None):
             if name not in data or hashlib.sha256(data[name]).hexdigest()!=h:return dict(status='REJECTED',reason='INSTALLED_SOURCE_NOT_REVIEWED_404',backup_created=False)
         if data!=snapshot(src):return dict(status='REJECTED',reason='SOURCE_CHANGED',backup_created=False)
         base=directory(stack,root,'ems_prepare_backups',True)
+        permissions=os.fstat(base)
+        if permissions.st_uid!=os.geteuid() or permissions.st_mode&0o077:raise ValueError('UNSAFE_BACKUP_ROOT_PERMISSIONS')
         try:os.mkdir(operation_id,mode=0o700,dir_fd=base)
         except FileExistsError:return verify(directory(stack,base,operation_id))
         op=directory(stack,base,operation_id)

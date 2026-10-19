@@ -64,6 +64,10 @@ class PrepareTests(unittest.TestCase):
         (self.src/'active.sqlite').write_text('not copied')
         with self.assertRaises(ValueError):self.run_prepare()
         self.assertFalse((self.root/'ems_prepare_backups').exists())
+    def test_unsafe_existing_backup_root_refused(self):
+        base=self.root/'ems_prepare_backups';base.mkdir();base.chmod(0o777)
+        with self.assertRaisesRegex(ValueError,'UNSAFE_BACKUP_ROOT_PERMISSIONS'):self.run_prepare()
+        self.assertFalse((base/ID).exists())
     def test_private_backup_permissions(self):
         self.run_prepare();op=self.root/'ems_prepare_backups'/ID
         self.assertEqual(op.stat().st_mode&0o777,0o700);self.assertEqual((op/'original/hub.py').stat().st_mode&0o777,0o600)
