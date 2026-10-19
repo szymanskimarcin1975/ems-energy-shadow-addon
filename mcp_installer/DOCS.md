@@ -54,3 +54,8 @@ blokuje decyzję o wdrożeniu. Kod zakończenia workera i jego aktywność są r
 Nie aktualizować/restartować dodatku przy aktywnym lub nierozstrzygniętym deployment.
 Istniejący stage jest tylko weryfikowany bajt po bajcie, nigdy nadpisywany; ponowny
 start dodatku nie uruchamia ani nie wznawia instalacji.
+
+0.1.2: odczytowe inspect i raport wskazują zgodność produkcyjnego kodu, kopii,
+obecność starego instalatora, dziennika i aktywnej blokady. Nie wykonują
+Core stop/start ani nie odblokowują APPLY. UNKNOWN nie uprawnia do aktualizacji
+instalatora. Nie wycofywać poprzedniego instalatora bez rozstrzygnięcia stanu.

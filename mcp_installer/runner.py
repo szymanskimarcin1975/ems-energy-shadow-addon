@@ -47,6 +47,7 @@ class Controller:
  def handle(self,r):
   if not isinstance(r,dict) or not isinstance(r.get('action'),str):raise ValueError()
   a=r['action']
+  if a=='inspect' and set(r)=={'action'}:return deployment_diagnostics()
   if a in ('preflight','deploy'):
    if set(r)!=({'action','confirmation'} if a=='deploy' else {'action'}):raise ValueError()
    if self.worker and self.worker.poll() is None:raise ValueError('BUSY')
@@ -66,9 +67,45 @@ class Controller:
    return {'status':'ACK_RECORDED_NOT_YET_ACCEPTED'}
   raise ValueError('UNSUPPORTED_ACTION')
 
+def deployment_diagnostics():
+ # Read-only inspection of fixed deployment paths; no Core operation or retry.
+ import manual_ack_watchdog as w
+ from deployment_core import verify
+ report={}
+ try:verify(w.SOURCE,STAGE/'BASE_SHA256SUMS');report['production_code']='ORIGINAL_VERIFIED'
+ except Exception:
+  try:verify(w.SOURCE,STAGE/'CANDIDATE_SHA256SUMS');report['production_code']='CANDIDATE_VERIFIED'
+  except Exception:report['production_code']='UNVERIFIED'
+ try:verify(w.BACK/'component',STAGE/'BASE_SHA256SUMS');report['recovery_code']='VERIFIED'
+ except Exception:report['recovery_code']='UNVERIFIED'
+ old=Path('/config/mcp-ems2/mcp-package/install.sh')
+ report['legacy_installer_guard']='ABSENT'
+ if old.exists() or old.is_symlink():
+  try:
+   import stat
+   fd=os.open(old,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+   with os.fdopen(fd) as f:
+    st=os.fstat(f.fileno())
+    if not stat.S_ISREG(st.st_mode) or st.st_size>1000000:raise ValueError()
+    report['legacy_installer_guard']='OLD_STANDALONE_INSTALLER_MUST_BE_WITHDRAWN' if 'ha core stop' in f.read() else 'NO_DIRECT_CORE_STOP_FOUND'
+  except Exception:report['legacy_installer_guard']='UNREADABLE_DO_NOT_DEPLOY'
+ try:
+  report['deployment']=w.status(w.BACK)
+ except FileNotFoundError:report['deployment']={'phase':'NO_DEPLOYMENT_RECORD'}
+ except Exception:report['deployment']={'phase':'UNKNOWN_DO_NOT_DEPLOY'}
+ try:
+  report['deployment_lease_held']=w.watchdog_lease_held(w.BACK)
+ except FileNotFoundError:report['deployment_lease_held']=False
+ except Exception:report['deployment_lease_held']=None
+ report['safe_to_update_installer']=(report['production_code']=='ORIGINAL_VERIFIED' and report['deployment']['phase']=='NO_DEPLOYMENT_RECORD' and report['deployment_lease_held'] is False)
+ report['deployment_permitted']=False # diagnostics never authorizes APPLY
+ return report
+
 def snapshot(controller):
  try:state=controller.handle({'action':'status'})
  except Exception:state={'phase':'STATUS_UNAVAILABLE_DO_NOT_DEPLOY'}
+ try:state['diagnostics']=deployment_diagnostics()
+ except Exception:state['diagnostics']={'status':'UNAVAILABLE_DO_NOT_DEPLOY'}
  state['worker_running']=bool(controller.worker and controller.worker.poll() is None)
  state['worker_exit_code']=None if controller.worker is None else controller.worker.poll()
  return state
@@ -112,6 +149,7 @@ def main():
   print('BLOCKED_PACKAGE_OR_OPTIONS');return 1
  c=Controller();buffer=""
  print("READY_PACKAGE_VERIFIED_WAITING_FOR_REQUEST_NO_APPLY",flush=True)
+ print("READ_ONLY_DEPLOYMENT_DIAGNOSTICS "+json.dumps(deployment_diagnostics()),flush=True)
  threading.Thread(target=monitor,args=(c,),daemon=True).start()
  # EOF never stops the watchdog's container: Supervisor/Core can disconnect.
  while True:
