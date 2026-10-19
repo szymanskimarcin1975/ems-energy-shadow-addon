@@ -5,7 +5,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SRC=/config/custom_components/mcp_server_http_transport
 BACK=/config/mcp_prepare_ems2_recovery
 MODE=${1:-prepare}
-for tool in sha256sum unzip cp mv cmp find sort ha nohup env; do command -v "$tool" >/dev/null || { echo "MISSING_TOOL:$tool"; exit 1; }; done
+for tool in sha256sum unzip cp mv cmp find sort ha nohup setsid env; do command -v "$tool" >/dev/null || { echo "MISSING_TOOL:$tool"; exit 1; }; done
 [ "$MODE" = prepare ] || [ "$MODE" = apply ] || [ "$MODE" = rollback ] || exit 1
 cd "$ROOT"
 sha256sum -c SHA256SUMS
@@ -29,7 +29,7 @@ fi
 [ -f "$BACK/PREPARED" ] || { echo PREPARE_REQUIRED; exit 1; }
 # Core restart can disconnect Nabu Casa ingress; keep work in the addon process.
 if [ "${EMS_MCP_DETACHED:-0}" != 1 ]; then
- nohup env EMS_MCP_DETACHED=1 sh "$ROOT/install.sh" "$MODE" CONFIRM_CORE_RESTART > "$BACK/$MODE.log" 2>&1 </dev/null &
+ nohup setsid env EMS_MCP_DETACHED=1 sh "$ROOT/install.sh" "$MODE" CONFIRM_CORE_RESTART > "$BACK/$MODE.log" 2>&1 </dev/null &
  echo "QUEUED_SERVER_SIDE: $BACK/$MODE.log"
  exit 0
 fi

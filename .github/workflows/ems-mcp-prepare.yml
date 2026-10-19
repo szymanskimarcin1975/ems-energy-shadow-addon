@@ -20,6 +20,7 @@ jobs:
       - run: python tools/mcp_prepare/test_prepare.py -v
       - run: python -m compileall -q tools/mcp_prepare
   real-ha-mcp-oauth:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -78,7 +79,7 @@ jobs:
           import shutil,zipfile
           from pathlib import Path
           component=Path('isolated-ha/custom_components/mcp_server_http_transport')
-          shutil.move(component,component.with_name('candidate-preserved'))
+          shutil.move(component,Path('isolated-ha/candidate-code-preserved'))
           with zipfile.ZipFile('mcp-package/mcp-1.18.0-ems.1-code-recovery.zip') as z:z.extractall('isolated-ha')
           PY
           python ci/mcp_prepare/real_mcp_test.py rollback

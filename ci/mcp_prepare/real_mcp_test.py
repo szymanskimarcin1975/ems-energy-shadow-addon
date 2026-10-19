@@ -71,6 +71,7 @@ async def main(phase):
     await asyncio.sleep(.2)
    status,body=await rpc('initialize');check('real_OAuth_access_token_validated',status==200 and 'result' in body)
    status,body=await rpc('tools/list');names={t['name'] for t in body['result']['tools']}
+   (OUT/(phase+'-tool-names.json')).write_text(json.dumps(sorted(names)))
    check('tools_list_correct',NAMES.issubset(names) if phase!='rollback' else not NAMES.intersection(names))
    check('old_tools_retained',{'ems_admin_options_inspect','get_state','call_service'}.issubset(names))
    for auth in ({},headers(admin,exp=int(time.time())-1),headers(admin,aud='wrong-resource')):
