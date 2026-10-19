@@ -1,0 +1,376 @@
+[
+  {
+    "id": "1781342904572",
+    "name": "EMS: Powiadomienie - Start Pracy",
+    "triggers": [
+      {
+        "entity_id": "sensor.sterownik_pompy_pompa_ciepla_pobor_mocy_elektrycznej",
+        "above": 0.1,
+        "trigger": "numeric_state"
+      }
+    ],
+    "referenced_entities": [
+      "sensor.sterownik_pompy_pompa_ciepla_pobor_mocy_elektrycznej",
+      "input_boolean.smart_grid_automatyzacja"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1781342949756",
+    "name": "EMS: Powiadomienie - Koniec Pracy",
+    "triggers": [
+      {
+        "entity_id": "sensor.sterownik_pompy_pompa_ciepla_pobor_mocy_elektrycznej",
+        "below": 0.05,
+        "for": {
+          "minutes": 2
+        },
+        "trigger": "numeric_state"
+      }
+    ],
+    "referenced_entities": [
+      "sensor.sterownik_pompy_pompa_ciepla_pobor_mocy_elektrycznej",
+      "sensor.solaredge_i1_b1_state_of_energy",
+      "sensor.sterownik_pompy_temp_cwu"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1789998595026",
+    "name": "EMS: Automatyzacja Zarządzania Pompą Ciepła i Magazynem (Tryb Zimowy G13)",
+    "triggers": [
+      {
+        "trigger": "time_pattern",
+        "minutes": "/15"
+      },
+      {
+        "trigger": "time",
+        "at": [
+          "02:00:00",
+          "05:00:00",
+          "07:00:00",
+          "11:00:00",
+          "13:00:00",
+          "14:00:00",
+          "16:00:00",
+          "17:00:00",
+          "20:00:00",
+          "21:00:00"
+        ]
+      },
+      {
+        "trigger": "state",
+        "entity_id": "input_boolean.smart_grid_automatyzacja"
+      }
+    ],
+    "referenced_entities": [
+      "input_boolean.smart_grid_automatyzacja",
+      "input_select.ems_battery_control_owner",
+      "sensor.solaredge_i1_m1_ac_power",
+      "sensor.solaredge_i1_b1_dc_power",
+      "sensor.solaredge_i1_b1_state_of_energy",
+      "script.ems_battery_command_gateway",
+      "number.sterownik_pompy_nastawa_temperatury_co",
+      "number.modbus_limit_mocy",
+      "number.sterownik_pompy_nastawa_temperatury_cwu",
+      "binary_sensor.workday_sensor",
+      "binary_sensor.workday_jutro",
+      "sensor.solcast_forecast_tomorrow",
+      "sensor.solcast_forecast_today"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1790088829274",
+    "name": "EMS: Przełącznik Taryf G13 (Dzień/Miesiąc/Rok)",
+    "triggers": [
+      {
+        "trigger": "time",
+        "at": [
+          "00:00:00",
+          "07:00:00",
+          "13:00:00",
+          "16:00:00",
+          "21:00:00"
+        ]
+      },
+      {
+        "trigger": "state",
+        "entity_id": [
+          "binary_sensor.workday_sensor_pl"
+        ]
+      },
+      {
+        "trigger": "homeassistant",
+        "event": "start"
+      },
+      {
+        "trigger": "state",
+        "entity_id": [
+          "select.zuzycie_dzienne_g13",
+          "select.zuzycie_miesieczne_g13",
+          "select.zuzycie_roczne_g13"
+        ],
+        "from": "unavailable"
+      },
+      {
+        "trigger": "state",
+        "entity_id": [
+          "select.zuzycie_dzienne_g13",
+          "select.zuzycie_miesieczne_g13",
+          "select.zuzycie_roczne_g13"
+        ],
+        "from": "unknown"
+      }
+    ],
+    "referenced_entities": [
+      "binary_sensor.workday_sensor_pl",
+      "select.zuzycie_dzienne_g13",
+      "select.zuzycie_miesieczne_g13",
+      "select.zuzycie_roczne_g13"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1790846963785",
+    "name": "EMHASS: Cykliczna Aktualizacja Planu (AI)",
+    "triggers": [
+      {
+        "trigger": "time_pattern",
+        "hours": "/3"
+      },
+      {
+        "trigger": "homeassistant",
+        "event": "start"
+      }
+    ],
+    "referenced_entities": [],
+    "desired_cwu": null
+  },
+  {
+    "id": "1790849796497",
+    "name": "Zasilanie: G13 - Ładowanie magazynu na podstawie Solcast",
+    "triggers": [
+      {
+        "at": "21:00:00",
+        "trigger": "time"
+      },
+      {
+        "at": "13:00:00",
+        "trigger": "time"
+      }
+    ],
+    "referenced_entities": [
+      "sensor.solcast_pv_forecast_prognoza_na_jutro",
+      "sensor.solaredge_i1_b1_state_of_energy",
+      "input_select.ems_battery_control_owner",
+      "sensor.solaredge_i1_m1_ac_power",
+      "sensor.solaredge_i1_b1_dc_power",
+      "script.ems_battery_command_gateway"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1790850595344",
+    "name": "Zasilanie: G13 - Zakończenie ładowania (Powrót do autokonsumpcji)",
+    "triggers": [
+      {
+        "at": "07:00:00",
+        "trigger": "time"
+      },
+      {
+        "at": "16:00:00",
+        "trigger": "time"
+      }
+    ],
+    "referenced_entities": [
+      "input_select.ems_battery_control_owner",
+      "sensor.solaredge_i1_m1_ac_power",
+      "sensor.solaredge_i1_b1_dc_power",
+      "sensor.solaredge_i1_b1_state_of_energy",
+      "script.ems_battery_command_gateway"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1790855545227",
+    "name": "Pompa Ciepła: G13 - Grzanie CWU w tanich godzinach",
+    "triggers": [
+      {
+        "at": "13:00:00",
+        "trigger": "time"
+      },
+      {
+        "at": "21:00:00",
+        "trigger": "time"
+      }
+    ],
+    "referenced_entities": [
+      "climate.woda_uzytkowa"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1791091200000",
+    "name": "EMS 2.0: Predykcyjne zarządzanie magazynem i pompą",
+    "triggers": [
+      {
+        "trigger": "time_pattern",
+        "minutes": "/5",
+        "id": "monitor"
+      },
+      {
+        "trigger": "time",
+        "at": [
+          "02:30:00",
+          "04:00:00",
+          "07:00:00",
+          "13:00:00",
+          "16:00:00",
+          "21:00:00"
+        ],
+        "id": "granica"
+      },
+      {
+        "trigger": "homeassistant",
+        "event": "start",
+        "id": "start"
+      },
+      {
+        "trigger": "template",
+        "value_template": "{% set raw = states('sensor.solaredge_i1_b1_state_of_energy') %}{{ is_number(raw) and 0 <= (raw | float(-1)) <= 100 }}",
+        "id": "soc_recovered"
+      }
+    ],
+    "referenced_entities": [
+      "sensor.solaredge_i1_b1_state_of_energy",
+      "sensor.solaredge_i1_m1_ac_power",
+      "sensor.solcast_pv_forecast_prognoza_na_jutro",
+      "sensor.solcast_pv_forecast_prognoza_na_dzisiaj",
+      "binary_sensor.workday_jutro",
+      "binary_sensor.workday_sensor_pl",
+      "sensor.solaredge_i1_b1_dc_power",
+      "select.solaredge_i1_storage_control_mode",
+      "input_select.ems_battery_control_owner",
+      "script.ems_battery_command_gateway",
+      "number.solaredge_i1_storage_charge_limit",
+      "number.solaredge_i1_storage_discharge_limit",
+      "number.solaredge_i1_storage_command_timeout",
+      "number.sterownik_pompy_nastawa_temperatury_cwu",
+      "select.solaredge_i1_storage_command_mode",
+      "sensor.sterownik_pompy_temp_cwu",
+      "sensor.sterownik_pompy_potwierdzenie_cwu"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1791091300000",
+    "name": "EMS 2.0: Taryfa G13 licznika kotłowni",
+    "triggers": [
+      {
+        "trigger": "time",
+        "at": [
+          "00:00:00",
+          "07:00:00",
+          "13:00:00",
+          "16:00:00",
+          "21:00:00"
+        ]
+      },
+      {
+        "trigger": "state",
+        "entity_id": "binary_sensor.workday_sensor_pl"
+      },
+      {
+        "trigger": "homeassistant",
+        "event": "start"
+      }
+    ],
+    "referenced_entities": [
+      "binary_sensor.workday_sensor_pl",
+      "select.kotlownia_g13_dzien",
+      "select.kotlownia_g13_miesiac",
+      "select.kotlownia_g13_rok"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "1791091400000",
+    "name": "EMS 2.0: Skrzynka danych",
+    "triggers": [
+      {
+        "trigger": "time_pattern",
+        "minutes": "/5"
+      }
+    ],
+    "referenced_entities": [
+      "binary_sensor.workday_sensor_pl",
+      "select.kotlownia_g13_dzien",
+      "sensor.0xa4c1389eebc44e6a_power_a",
+      "sensor.0xa4c1389eebc44e6a_energy_a",
+      "sensor.kotlownia_g13_dzien_dolina",
+      "sensor.kotlownia_g13_dzien_szczyt_przedpoludniowy",
+      "sensor.kotlownia_g13_dzien_szczyt_popoludniowy",
+      "sensor.solaredge_i1_dc_power",
+      "sensor.solaredge_i1_ac_power",
+      "sensor.solaredge_i1_m1_ac_power",
+      "sensor.zuzycie_domu_live",
+      "sensor.solaredge_i1_b1_state_of_energy",
+      "sensor.solaredge_i1_b1_dc_power",
+      "select.solaredge_i1_storage_command_mode",
+      "sensor.sterownik_pompy_temp_cwu",
+      "sensor.cwu_zasilacz_temperatura",
+      "sensor.0xa4c1385d4d396787_temperature",
+      "sensor.sterownik_pompy_temp_co",
+      "number.sterownik_pompy_nastawa_temperatury_cwu",
+      "number.sterownik_pompy_nastawa_temperatury_co",
+      "sensor.sterownik_pompy_hz_sprezarki",
+      "sensor.sterownik_pompy_pompa_ciepla_aktualna_moc_termiczna",
+      "sensor.sterownik_pompy_pompa_ciepla_realny_cop_live",
+      "binary_sensor.sterownik_pompy_pompka_obiegowa",
+      "sensor.solcast_pv_forecast_prognoza_na_dzisiaj",
+      "sensor.solcast_pv_forecast_prognoza_na_jutro"
+    ],
+    "desired_cwu": null
+  },
+  {
+    "id": "25a56f4b-e83c-4e41-bf0f-1fe5d879eeea",
+    "name": "EMS 2.0 — Sterownik CWU v1",
+    "triggers": [
+      {
+        "trigger": "time_pattern",
+        "minutes": "/5"
+      },
+      {
+        "trigger": "time",
+        "at": [
+          "00:00:00",
+          "04:00:00",
+          "07:00:00",
+          "13:00:00",
+          "16:00:00",
+          "17:00:00",
+          "21:00:00",
+          "11:00:00",
+          "15:00:00"
+        ]
+      },
+      {
+        "trigger": "homeassistant",
+        "event": "start"
+      }
+    ],
+    "referenced_entities": [
+      "automation.ems_2_0_sterownik_cwu_v1",
+      "automation.ems_automatyzacja_zarzadzania_pompa_ciepla_tryb_zimowy_g13",
+      "automation.zasilanie_g13_ladowanie_magazynu_na_podstawie_solcast",
+      "automation.zasilanie_g13_zakonczenie_ladowania_powrot_do_autokonsumpcji",
+      "automation.pompa_ciepla_g13_grzanie_cwu_w_tanich_godzinach",
+      "number.sterownik_pompy_nastawa_temperatury_cwu",
+      "sensor.sterownik_pompy_sterownik_pompy_kod_bledu_surowy",
+      "sensor.sterownik_pompy_potwierdzenie_cwu",
+      "sensor.sterownik_pompy_temp_cwu"
+    ],
+    "desired_cwu": "{% set n = now() %}{% set m = n.hour * 60 + n.minute %}{% set d = n.weekday() %}{{ 50 if (d < 5 and (m < 420 or 780 <= m < 960)) or (d == 5 and 1020 <= m < 1260) or (d == 6 and 660 <= m < 900) else 42 }}"
+  }
+]
