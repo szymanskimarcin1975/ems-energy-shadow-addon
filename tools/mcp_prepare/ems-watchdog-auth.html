@@ -1,0 +1,10 @@
+<!doctype html><html lang="pl"><meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Jednorazowy OAuth watchdoga MCP</title>
+<h1>Osobny klient watchdoga</h1>
+<p>Uruchamiaj wyłącznie po zgodzie właściciela. Scope openid nie ogranicza narzędzi administratora MCP. Poświadczenie może mieć jego pełne uprawnienia przez maksymalnie godzinę.</p>
+<p>Nie wpisuj tu tokenów ChatGPT, Nabu Casa ani Home Assistant. Zaloguj się wyłącznie przez zwykły formularz autoryzacji OIDC. Pliku oauth-probe.json nie przesyłaj przez rozmowę.</p>
+<button id="approve">Zatwierdzam utworzenie jednorazowego klienta OAuth</button>
+<p id="status">Samo otwarcie strony nie rejestruje klienta.</p>
+<script src="watchdog-auth.js"></script></html>

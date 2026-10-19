@@ -19,6 +19,8 @@ jobs:
           python-version: '3.12'
       - run: python tools/mcp_prepare/test_prepare.py -v
       - run: python ci/mcp_prepare/test_watchdog.py
+      - run: python ci/mcp_prepare/test_credentials.py
+      - run: node ci/mcp_prepare/test_auth_page.js
       - run: python -m compileall -q tools/mcp_prepare
   real-ha-mcp-oauth:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/prepare/mcp-solaredge-service'
@@ -69,6 +71,8 @@ jobs:
           requirements=sorted({q for d in domains for q in json.loads((root/d/'manifest.json').read_text()).get('requirements',[])})
           subprocess.check_call([sys.executable,'-m','pip','install',*requirements])
           PY
+      - name: Verify dedicated-client revocation against pinned actual OIDC JWT verifier
+        run: python ci/mcp_prepare/test_oidc_revocation.py oidc-upstream/custom_components/oidc_provider/token_validator.py
       - name: Actual HA HTTP MCP OAuth boundary and interrupted request
         run: |
           python ci/mcp_prepare/real_mcp_test.py prepare

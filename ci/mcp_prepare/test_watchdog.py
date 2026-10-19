@@ -12,6 +12,7 @@ import hashlib
 import fcntl
 from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0,str(ROOT/'tools/mcp_prepare'))
 spec=importlib.util.spec_from_file_location('wd',ROOT/'tools/mcp_prepare/watchdog.py')
 wd=importlib.util.module_from_spec(spec);spec.loader.exec_module(wd)
 
@@ -126,6 +127,7 @@ class HealthTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    path=Path(tmp)/'oauth-probe.json';path.write_text(json.dumps({'access_token':'SYNTHETIC_SECRET','public_origin':'https://synthetic.invalid'}));path.chmod(0o644)
    with self.assertRaises(wd.Blocked):wd.private_json(path)
-   path.chmod(0o600);self.assertEqual(wd.private_json(path)[1],'synthetic.invalid')
+   path.chmod(0o600)
+   with self.assertRaises(ValueError):wd.private_json(path)  # Old arbitrary token files refused
 
 if __name__=='__main__':unittest.main(verbosity=2)

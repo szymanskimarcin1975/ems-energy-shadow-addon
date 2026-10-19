@@ -55,15 +55,9 @@ def private_json(path):
         value = json.loads(os.read(fd, 16385))
     finally:
         os.close(fd)
-    if set(value) != {'access_token', 'public_origin'}:
-        raise Blocked('INVALID_PROBE_CONFIGURATION')
-    from urllib.parse import urlsplit
-    origin = urlsplit(value['public_origin'])
-    if origin.scheme != 'https' or not origin.hostname or origin.username or origin.password or origin.path not in ('', '/') or origin.query or origin.fragment:
-        raise Blocked('INVALID_PUBLIC_ORIGIN')
-    if not isinstance(value['access_token'], str) or not value['access_token'] or '\n' in value['access_token'] or '\r' in value['access_token']:
-        raise Blocked('INVALID_CREDENTIAL')
-    return value, origin.netloc
+    from credential_lifecycle import inspect
+    host, _ = inspect(value)
+    return value, host
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
@@ -266,7 +260,15 @@ def main():
             ok = probe(False)
             print('AUTHENTICATED_BASELINE_PASS' if ok else 'AUTHENTICATED_BASELINE_FAIL')
             return 0 if ok else 1
-        ok = Deployment(root, BACK, SRC, probe).execute()
+        deployment = Deployment(root, BACK, SRC, probe)
+        ok = deployment.execute()
+        # This runs only after the controller releases its Core/code lock and
+        # reaches a terminal state. No credential revoke during health/rollback.
+        from credential_lifecycle import finalize
+        cleanup = finalize(probe, BACK)
+        print(cleanup)
+        if cleanup != 'REVOKED_AND_TOKEN_DENIED':
+            ok = False
     except (OSError, ValueError, Blocked, BlockingIOError):
         print('WATCHDOG_BLOCKED_NO_SECRET_DETAILS'); return 1
     print('WATCHDOG_SUCCESS' if ok else 'WATCHDOG_NOT_ACCEPTED_CHECK_PRIVATE_EVENT_LOG')

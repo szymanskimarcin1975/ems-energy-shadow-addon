@@ -10,7 +10,7 @@ def build(package, out):
     out.mkdir(parents=True,exist_ok=False)
     for name in ('mcp-1.18.0-ems.2-prepare.zip','mcp-1.18.0-ems.1-code-recovery.zip','BASE_SHA256SUMS','CANDIDATE_SHA256SUMS','BASE_FILELIST'):
         shutil.copyfile(package/name,out/name)
-    for name in ('watchdog.py','watchdog-launch.sh','WATCHDOG_PL.md'):
+    for name in ('watchdog.py','watchdog-launch.sh','credential_lifecycle.py','WATCHDOG_PL.md','AUTHORIZATION_PL.md','ems-watchdog-auth.html','watchdog-auth.js'):
         shutil.copyfile(ROOT/name,out/name)
     # One supported write entry point; apply and rollback are serialized by the
     # same controller. Never run the older standalone installer alongside this.

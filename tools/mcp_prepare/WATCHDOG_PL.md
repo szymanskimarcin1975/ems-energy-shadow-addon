@@ -16,8 +16,8 @@ Terminal & SSH, poza Core. Brak nowych portów. Nie zastępuje dostępu awaryjne
    jako zamiennika. Nie zmieniać konfiguracji OAuth ani nie obchodzić wydawania
    tokenów. Istnienie bezpiecznej ścieżki jego uzyskania NIE JEST potwierdzone.
 4. Prywatny plik oauth-probe.json w katalogu recovery, właściciel=proces dodatku,
-   tryb0600, dwa pola: access_token oraz public_origin (istniejący HTTPS origin
-   zasobu OAuth). Token musi wystarczyć na cały test, powrót i margines czasu.
+   tryb0600, cztery pola: access_token, public_origin, client_id, client_name.
+   Wyłącznie nowy klient z aud=client_id, scope openid, TTL<=3600s; patrz AUTHORIZATION_PL.md. Token musi wystarczyć na cały test, powrót i margines czasu.
    Nie umieszczać tego pliku w Git ani artefaktach. Nie podawać sekretu w argv.
 5. Test preflight musi potwierdzić faktyczny API proxy Supervisora oraz endpoint
    MCP z dodatku, pozytywny OAuth, odmowę nieprawidłowego tokenu i admin-only
