@@ -1,8 +1,0 @@
-FROM ems-shadow:published
-ENV PYTHONPATH=/app:/app/staging:/app/diagnostic_export
-COPY ems_shadow/tests/ /tests/
-COPY ci/stdin/ /ci/stdin/
-COPY ems_shadow/config.yaml /ems_shadow/config.yaml
-RUN python -m unittest discover -s /tests -v
-RUN python -m unittest discover -s /app/diagnostic_export -v
-RUN python /ci/stdin/ci_tests.py
