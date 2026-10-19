@@ -10,7 +10,7 @@ ID='a'*32;DISCONNECT='b'*32;INCOMPLETE='c'*32
 
 def prepare():
  CONFIG.mkdir();cc=CONFIG/'custom_components';cc.mkdir();(cc/'__init__.py').write_text('')
- (CONFIG/'configuration.yaml').write_text(json.dumps({'homeassistant':{'name':'Isolated MCP','country':'PL','latitude':0,'longitude':0,'elevation':0,'unit_system':'metric','time_zone':'Europe/Warsaw'},'http':{'server_host':['127.0.0.1'],'server_port':8123},'logger':{'default':'critical'}}))
+ (CONFIG/'configuration.yaml').write_text(json.dumps({'homeassistant':{'name':'Isolated MCP','country':'PL','latitude':0,'longitude':0,'elevation':0,'unit_system':'metric','time_zone':'Europe/Warsaw'},'api':{},'http':{'server_host':['127.0.0.1'],'server_port':8123},'logger':{'default':'critical'}}))
  with zipfile.ZipFile(ROOT/'mcp-package/mcp-1.18.0-ems.2-prepare.zip') as z:z.extractall(CONFIG)
  shutil.copytree(ROOT/'oidc-upstream/custom_components/oidc_provider',cc/'oidc_provider')
  shutil.copytree(ROOT/'solar-upstream/custom_components/solaredge_modbus_multi',cc/'solaredge_modbus_multi')
@@ -99,6 +99,8 @@ async def main(phase):
    check('watchdog_independent_authenticated_MCP_API_admin_read',await asyncio.to_thread(probe,phase!='rollback'))
    probe.credentials={'access_token':token(admin,exp=int(time.time())-1)}
    check('watchdog_expired_OAuth_rejected',not await asyncio.to_thread(probe,phase!='rollback'))
+   probe.credentials={'access_token':token(other)}
+   check('watchdog_nonadmin_OAuth_rejected',not await asyncio.to_thread(probe,phase!='rollback'))
 
    for auth in ({},headers(admin,exp=int(time.time())-1),headers(admin,aud='wrong-resource')):
     status,_=await rpc('tools/list',auth=auth);check('invalid_token_denied',status==401)
