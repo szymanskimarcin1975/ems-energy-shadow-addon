@@ -1,0 +1,20 @@
+name: MCP Controlled Installer
+version: 0.1.0
+slug: mcp_controlled_installer
+description: One-shot MCP code deployment with manual ACK and code-only recovery
+arch: [amd64, aarch64]
+startup: application
+boot: manual
+init: false
+stdin: true
+homeassistant_api: true
+hassio_api: true
+hassio_role: manager
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+options:
+  package_sha256: ""
+schema:
+  package_sha256: str

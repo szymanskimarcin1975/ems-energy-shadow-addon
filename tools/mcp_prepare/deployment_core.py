@@ -68,6 +68,8 @@ class Deployment:
         except subprocess.TimeoutExpired:
             # Unknown Supervisor job completion: do not race it with file swaps.
             raise Blocked('CORE_OPERATION_UNKNOWN') from None
+        if r.returncode == 70:
+            raise Blocked("CORE_OPERATION_UNKNOWN")
         return r.returncode == 0
 
     def wait_health(self, candidate):

@@ -1,9 +1,9 @@
 name: EMS bounded MCP PREPARE checks
 on:
   push:
-    paths: ['tools/mcp_prepare/**', '.github/workflows/ems-mcp-prepare.yml']
+    paths: ['tools/mcp_prepare/**', 'mcp_installer/**', 'ci/mcp_prepare/**', '.github/workflows/ems-mcp-prepare.yml']
   pull_request:
-    paths: ['tools/mcp_prepare/**', '.github/workflows/ems-mcp-prepare.yml']
+    paths: ['tools/mcp_prepare/**', 'mcp_installer/**', 'ci/mcp_prepare/**', '.github/workflows/ems-mcp-prepare.yml']
 permissions:
   contents: read
 jobs:
@@ -19,7 +19,20 @@ jobs:
           python-version: '3.12'
       - run: python tools/mcp_prepare/test_prepare.py -v
       - run: python ci/mcp_prepare/test_manual_ack.py
+      - run: python ci/mcp_prepare/test_installer_addon.py
       - run: python -m compileall -q tools/mcp_prepare
+  installer-container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: docker build -t mcp-installer:test mcp_installer
+      - name: Python runtime, authorization refusal and isolated recovery scenarios
+        run: |
+          docker run --rm -v "$PWD:/src:ro" -w /src mcp-installer:test python3 ci/mcp_prepare/test_installer_addon.py
+          docker run --rm -v "$PWD:/src:ro" -w /src mcp-installer:test python3 ci/mcp_prepare/test_manual_ack.py
   real-ha-mcp-oauth:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/prepare/mcp-solaredge-service'
     runs-on: ubuntu-24.04
@@ -55,6 +68,7 @@ jobs:
           python tools/mcp_prepare/build_package.py --source mcp-base --output mcp-package
           python ci/mcp_prepare/test_installer.py mcp-base
           python tools/mcp_prepare/build_manual_ack.py mcp-package mcp-watchdog-package
+          python tools/mcp_prepare/build_installer_addon.py mcp-watchdog-package.zip mcp-installer-delivery.zip
           cd mcp-package
           sha256sum -c SHA256SUMS
       - name: Install isolated HA and its exact default requirements
@@ -93,4 +107,5 @@ jobs:
             mcp-evidence/
             mcp-watchdog-package/
             mcp-watchdog-package.zip
+            mcp-installer-delivery.zip
           retention-days: 30

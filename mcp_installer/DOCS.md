@@ -1,0 +1,45 @@
+# Dedykowany instalator MCP (bez instalacji produkcyjnej)
+
+Oddzielny dodatek, niezależny od EMS SHADOW i HA Core. Python 3.14.8 jest
+częścią obrazu. Nie ma portów publicznych, listenera HTTP, dostępu Docker,
+nowych tokenów OAuth ani interfejsu sterowania urządzeniami.
+
+Uprawnienia: homeassistant_api do autoryzowanego testu Core API;
+hassio_api/manager do kontrolowanych operacji Core check/stop/start.
+RW /config jest potrzebne do wymiany wyłącznie kodu MCP i kopii kodu.
+Są to szerokie uprawnienia serwisowe, nie sandbox per plik. Kontener i
+zatwierdzony pakiet są zaufanym kodem. Nie uruchamiać obcych pakietów.
+
+## Wdrożenie po osobnej zgodzie
+1. Zainstalować lokalny dodatek z załączonego katalogu mcp_installer, bez
+   zmieniania EMS SHADOW. Nie scalać PR ani nie używać niezatwierdzonego main.
+2. Umieścić zweryfikowany mcp-installer-package.zip w /config i wpisać jego
+   SHA-256 w opcji package_sha256. Zachować dotychczasowy katalog recovery.
+3. Uruchomić dodatek. Sam start NIE wykonuje instalacji ani restartu Core.
+4. Przez administracyjną usługę hassio.addon_stdin dla tego dodatku przesłać:
+   {"action":"preflight"}. Odczytać log: wszystkie kontrole muszą być PASS.
+5. Dopiero po osobnej zgodzie na restart przesłać:
+   {"action":"deploy","confirmation":"CONFIRM_CORE_RESTART"}.
+6. Po powrocie Nabu Casa sprawdzić istniejący OAuth, stare i oba nowe narzędzia,
+   wykonać świeżą diagnostykę dla diagnostic_operation_id z action=status.
+   ACK przez tę samą usługę wymaga action=ack, operation (pierwsze 12 znaków),
+   challenge i pięciu jawnych checks=true zgodnych z CHECKS watchdoga.
+   Nie potwierdzać przed rzeczywistymi kontrolami. Status SUCCESS_ACK_CONSUMED
+   kończy operację; samo przyjęcie ACK nie dowodzi zaakceptowania.
+
+## Trwałość i odzyskiwanie
+Core restart nie zatrzymuje dodatku. stdin EOF nie kończy kontenera; watchdog
+pracuje jako proces potomny. Nie restartować/aktualizować dodatku, Supervisora
+ani OS podczas operacji. Restart dodatku NIE wznawia wcześniejszego deploymentu:
+trwały stage i journal blokują automatyczne ponowienie. Awaria hosta, dodatku
+lub dysku pozostaje ryzykiem; brak niezależnego zdalnego dostępu nie jest naprawiany
+przez ten dodatek. Obsługiwany zakres to restart samego Core.
+
+ACK: nieprzedłużalne 900 s od gotowości lokalnego API. Powrót Nabu Casa
+zużywa ten czas. Brak ACK lub błąd powoduje najwyżej jedną próbę przywrócenia
+zweryfikowanego kodu ems.1; .storage, OAuth i SQLite nie są cofane. Wynik UNKNOWN
+operacji Supervisora nie jest automatycznie ponawiany. Wtedy potrzebne jest
+rozstrzygnięcie operatora; nie uruchamiać drugiego instalatora.
+
+Nie wykonywano instalacji, restartu ani testu na produkcyjnym Supervisorze.
+Testy CI kontenera i symulacje nie są dowodem działania Nabu Casa po awarii hosta.
