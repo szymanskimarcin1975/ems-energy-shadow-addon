@@ -36,6 +36,24 @@ class AddonTests(unittest.TestCase):
  def test_report_publication_contains_no_credentials(self):
   with tempfile.TemporaryDirectory() as t,patch.object(a,'REPORT',Path(t)/'status.yaml'),patch.object(a,'snapshot',return_value={'phase':'IDLE_NO_DEPLOYMENT_RECORD','worker_running':False}):
    a.publish(a.Controller());self.assertEqual(json.loads(a.REPORT.read_text())['phase'],'IDLE_NO_DEPLOYMENT_RECORD')
+ def test_inspect_never_launches_worker(self):
+  with patch.object(a,'deployment_diagnostics',return_value={'production_code':'ORIGINAL_VERIFIED'}),patch.object(a.subprocess,'Popen') as run:
+   self.assertEqual(a.Controller().handle({'action':'inspect'}),{'production_code':'ORIGINAL_VERIFIED'})
+   run.assert_not_called()
+ def test_inspect_has_no_implicit_authorization(self):
+  self.assertIn("report['deployment_permitted']=False",(ROOT/'mcp_installer/runner.py').read_text())
+ def test_read_only_inspect_identifies_legacy_guard_and_unchanged_code(self):
+  import types
+  with tempfile.TemporaryDirectory() as directory:
+   old=Path(directory)/'install.sh';old.write_text('ha core stop')
+   fake=types.SimpleNamespace(SOURCE=Path(directory)/'source',BACK=Path(directory),status=MagicMock(side_effect=FileNotFoundError),watchdog_lease_held=lambda b:False)
+   with patch.dict('sys.modules',{'manual_ack_watchdog':fake,'deployment_core':types.SimpleNamespace(verify=lambda *args:None)}),patch.object(a,'Path',return_value=old):
+    report=a.deployment_diagnostics()
+   self.assertEqual(report['legacy_installer_guard'],'OLD_STANDALONE_INSTALLER_MUST_BE_WITHDRAWN')
+   self.assertEqual(report['production_code'],'ORIGINAL_VERIFIED')
+   self.assertTrue(report['safe_to_update_installer'])
+   self.assertFalse(report['deployment_permitted'])
+   self.assertEqual(old.read_text(),'ha core stop')
  def test_permissions_and_no_public_listener(self):
   text=(ROOT/'mcp_installer/config.yaml').read_text()
   for x in ('homeassistant_api: true','hassio_api: true','hassio_role: manager','boot: manual','path: /config'):self.assertIn(x,text)

@@ -1,5 +1,5 @@
 name: MCP Controlled Installer
-version: 0.1.1
+version: 0.1.2
 slug: mcp_controlled_installer
 description: One-shot MCP code deployment with manual ACK and code-only recovery
 arch: [amd64, aarch64]
