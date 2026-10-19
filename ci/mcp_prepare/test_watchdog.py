@@ -104,8 +104,12 @@ class HealthTests(unittest.TestCase):
  def probe(self,behavior='ok',candidate=True):
   p=wd.Health.__new__(wd.Health);p.credentials={'access_token':'SYNTHETIC_SECRET'};p.host='synthetic.invalid';p.supervisor_token='SYNTHETIC_SUPERVISOR'
   def request(url,body=None,headers=None):
-   if url.startswith('http://supervisor'):return 200,{'message':'API running.'}
+   if url.startswith('http://supervisor'):return (200,[]) if behavior=='api-list' else (200,{'message':'API running.'})
    rid=body['id']
+   if behavior=='json-list':return 200,[]
+   if behavior=='initialize-list' and body['method']=='initialize':return 200,{'id':rid,'result':[]}
+   if behavior=='tools-list-invalid' and body['method']=='tools/list' and headers['Authorization'].endswith('SYNTHETIC_SECRET'):return 200,{'id':rid,'result':{'tools':[None]}}
+   if behavior=='inspect-list' and body['method']=='tools/call':return 200,{'id':rid,'result':{'content':[{'type':'text','text':'[]'}]}}
    if headers['Authorization'].endswith('deliberately-invalid-probe'):
     return (200,{'result':{}}) if behavior=='ignores-auth' else (401,{})
    if behavior=='oauth-failed':return 401,{}
@@ -117,6 +121,11 @@ class HealthTests(unittest.TestCase):
   p.request=request;return p
  def test_authenticated_protocol_and_admin_read(self):self.assertTrue(self.probe()(True))
  def test_plain_http200_is_not_health(self):self.assertFalse(self.probe('plain-200')(True))
+ def test_json_list_response_refused(self):self.assertFalse(self.probe('json-list')(True))
+ def test_initialize_list_refused(self):self.assertFalse(self.probe('initialize-list')(True))
+ def test_invalid_tools_items_refused(self):self.assertFalse(self.probe('tools-list-invalid')(True))
+ def test_api_list_refused(self):self.assertFalse(self.probe('api-list')(True))
+ def test_inspect_list_refused(self):self.assertFalse(self.probe('inspect-list')(True))
  def test_invalid_token_must_be_denied(self):self.assertFalse(self.probe('ignores-auth')(True))
  def test_oauth_failure(self):self.assertFalse(self.probe('oauth-failed')(True))
  def test_non_admin_denied(self):self.assertFalse(self.probe('non-admin')(True))

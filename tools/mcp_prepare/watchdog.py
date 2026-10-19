@@ -84,15 +84,16 @@ class Health:
             return error.code, {}
 
     def rpc(self, method, token, rid, params=None):
-        return self.request('http://homeassistant:8123/api/mcp_http',
+        status, body = self.request('http://homeassistant:8123/api/mcp_http',
             {'jsonrpc': '2.0', 'id': rid, 'method': method, 'params': params or {}},
             {'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json',
              'X-Forwarded-Proto': 'https', 'X-Forwarded-Host': self.host})
+        return status, body if isinstance(body, dict) else {}
 
     def __call__(self, candidate):
         # API proxy authentication is distinct from OAuth MCP authentication.
         status, body = self.request('http://supervisor/core/api/', headers={'Authorization': 'Bearer ' + self.supervisor_token})
-        if status != 200 or body.get('message') != 'API running.':
+        if status != 200 or not isinstance(body, dict) or body.get('message') != 'API running.':
             return False
         # A public or token-ignoring MCP endpoint is not a successful OAuth check.
         status, _ = self.rpc('tools/list', 'deliberately-invalid-probe', 11)
@@ -101,25 +102,28 @@ class Health:
         token = self.credentials['access_token']
         status, body = self.rpc('initialize', token, 12)
         result = body.get('result', {})
-        if status != 200 or body.get('id') != 12 or 'error' in body or not result.get('protocolVersion') or not isinstance(result.get('capabilities'), dict):
+        if status != 200 or body.get('id') != 12 or 'error' in body or not isinstance(result, dict) or not isinstance(result.get('protocolVersion'), str) or not isinstance(result.get('capabilities'), dict):
             return False
         status, body = self.rpc('tools/list', token, 13)
         if status != 200 or body.get('id') != 13 or 'error' in body:
             return False
-        names = {t.get('name') for t in body.get('result', {}).get('tools', [])}
+        result = body.get('result')
+        if not isinstance(result, dict) or not isinstance(result.get('tools'), list) or not all(isinstance(t, dict) and isinstance(t.get('name'), str) for t in result['tools']):
+            return False
+        names = {t['name'] for t in result['tools']}
         if not (OLD_TOOLS.issubset(names) and (NEW_TOOLS.issubset(names) if candidate else not NEW_TOOLS.intersection(names))):
             return False
         status, body = self.rpc('tools/call', token, 14, {'name': 'ems_admin_options_inspect',
             'arguments': {'entry_id': '01M39WCJ1Y5FQTXXR2FZJBV76K'}})
         result = body.get('result', {})
-        if status != 200 or body.get('id') != 14 or 'error' in body or result.get('isError'):
+        if status != 200 or body.get('id') != 14 or 'error' in body or not isinstance(result, dict) or result.get('isError'):
             return False
         # Valid admin-only inspect response, not merely successful tools/list.
         contents = result.get('content', [])
-        if not contents or contents[0].get('type') != 'text':
+        if not isinstance(contents, list) or not contents or not isinstance(contents[0], dict) or contents[0].get('type') != 'text' or not isinstance(contents[0].get('text'), str):
             return False
         inspected = json.loads(contents[0]['text'])
-        return inspected.get('status') == 'READ_ONLY' and inspected.get('entry_id') == '01M39WCJ1Y5FQTXXR2FZJBV76K'
+        return isinstance(inspected, dict) and inspected.get('status') == 'READ_ONLY' and inspected.get('entry_id') == '01M39WCJ1Y5FQTXXR2FZJBV76K'
 
 class Deployment:
     def __init__(self, root, backup, source, health, core=None, clock=time.monotonic, pause=time.sleep, deadline=300):
