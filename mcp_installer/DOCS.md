@@ -44,3 +44,13 @@ rozstrzygnięcie operatora; nie uruchamiać drugiego instalatora.
 
 Nie wykonywano instalacji, restartu ani testu na produkcyjnym Supervisorze.
 Testy CI kontenera i symulacje nie są dowodem działania Nabu Casa po awarii hosta.
+
+## Odbiór stanu w 0.1.1
+Po weryfikacji pakietu log pokazuje READY_PACKAGE_VERIFIED_WAITING_FOR_REQUEST_NO_APPLY.
+Nie oznacza to wykonania preflight ani deploy. Stały raport /config/mcp_installer_status.yaml
+można odczytać przez istniejące MCP get_config_file. IDLE_NO_DEPLOYMENT_RECORD
+oznacza brak dziennika wdrożenia, nie pomyślną instalację. STATUS_UNAVAILABLE_DO_NOT_DEPLOY
+blokuje decyzję o wdrożeniu. Kod zakończenia workera i jego aktywność są raportowane.
+Nie aktualizować/restartować dodatku przy aktywnym lub nierozstrzygniętym deployment.
+Istniejący stage jest tylko weryfikowany bajt po bajcie, nigdy nadpisywany; ponowny
+start dodatku nie uruchamia ani nie wznawia instalacji.
