@@ -39,7 +39,7 @@ class Safety:
                 if unit is not None and raw.get('attributes', {}).get('unit_of_measurement') != unit:
                     raise ValueError('UNIT')
                 if role == 'status':
-                    if raw.get('state') not in ('B_STATUS_OFF', 'B_STATUS_STANDBY', 'B_STATUS_INIT', 'B_STATUS_CHARGE', 'B_STATUS_DISCHARGE', 'B_STATUS_FAULT', 'B_STATUS_PRESERVE_CHARGE', 'B_STATUS_IDLE'):
+                    if raw.get('state') not in ('B_STATUS_OFF', 'B_STATUS_STANDBY', 'B_STATUS_INIT', 'B_STATUS_CHARGE', 'B_STATUS_DISCHARGE', 'B_STATUS_FAULT', 'B_STATUS_PRESERVE_CHARGE', 'B_STATUS_IDLE', 'B_STATUS_POWER_SAVING'):
                         raise ValueError('STATUS')
                     if raw['state'] == 'B_STATUS_FAULT': reasons.append('FAULT_B1')
                 else:
@@ -61,6 +61,9 @@ class Safety:
         if skew is not None and skew > 2: reasons.append('HA_SET_SKEW')
         if values.get('b1', 0) > 0 and states.get(roles['status'][0], {}).get('state') == 'B_STATUS_DISCHARGE': reasons.append('B1_SIGN_STATUS_CONFLICT')
         if values.get('b1', 0) < 0 and states.get(roles['status'][0], {}).get('state') == 'B_STATUS_CHARGE': reasons.append('B1_SIGN_STATUS_CONFLICT')
+        # Recognise quiescent telemetry only; this never authorises actuation.
+        if states.get(roles['status'][0], {}).get('state') == 'B_STATUS_POWER_SAVING' and values.get('b1') != 0:
+            reasons.append('B1_POWER_SAVING_POWER_CONFLICT')
         result = {'captured_at': at, 'valid_until': (stamp(at) + timedelta(seconds=45)).isoformat(),
                   'ha_set_valid': not reasons, 'reasons': sorted(set(reasons)), 'ha_skew_seconds': skew,
                   'device_synchronisation_confirmed': False, 'control_enabled': False,
