@@ -63,6 +63,7 @@ def watchdog_lease_held(backup):
 class LocalAPI:
     """Existing addon Supervisor access only. No new credential, no device calls."""
     def __init__(self):
+        self.reason='NOT_CHECKED'
         self.token=os.environ.get('SUPERVISOR_TOKEN')
         if not self.token:raise Blocked('EXISTING_SUPERVISOR_ACCESS_REQUIRED')
         class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -74,10 +75,17 @@ class LocalAPI:
             req=urllib.request.Request('http://supervisor/core/api/',headers={'Authorization':'Bearer '+self.token})
             with self.http.open(req,timeout=5) as response:
                 data=response.read(4097)
-                if len(data)>4096:return False
+                if len(data)>4096:
+                    self.reason='CORE_API_RESPONSE_TOO_LARGE';return False
                 body=json.loads(data)
-                return response.status==200 and isinstance(body,dict) and body.get('message')=='API running.'
-        except (OSError,ValueError,Blocked):return False
+                ok=response.status==200 and isinstance(body,dict) and body.get('message')=='API running.'
+                self.reason='CORE_API_READY' if ok else 'CORE_API_INVALID_RESPONSE'
+                return ok
+        except urllib.error.HTTPError as error:
+            self.reason={401:'CORE_API_AUTH_DENIED_CHECK_HOMEASSISTANT_API_PERMISSION',403:'CORE_API_FORBIDDEN'}.get(error.code,'CORE_API_HTTP_ERROR')
+            return False
+        except (OSError,ValueError,Blocked):
+            self.reason='CORE_API_UNAVAILABLE_OR_INVALID';return False
 
 def diagnostic_valid(root,config,state):
     # Exact candidate verifier is packaged, not dynamically supplied by caller.
@@ -196,6 +204,23 @@ def status(backup):
     s=read_json(backup/STATE)
     return {k:s.get(k) for k in ('phase','operation_id','challenge','candidate_sha256','package_manifest_sha256','diagnostic_operation_id','deadline_utc','rollback_attempted')}
 
+def preflight(root,backup,source,api_factory=LocalAPI):
+    # Fixed stage labels only: never print HTTP bodies, headers or exception text.
+    stages=(('PACKAGE',lambda:verify(root,root/'SHA256SUMS',exact=False)),
+            ('RECOVERY_CODE',lambda:verify(backup/'component',root/'BASE_SHA256SUMS')),
+            ('PRODUCTION_CODE',lambda:verify(source,root/'BASE_SHA256SUMS')))
+    for name,check in stages:
+        try:check()
+        except (OSError,ValueError,KeyError,Blocked):
+            print('PREFLIGHT_'+name+'_FAILED');return 1
+        print('PREFLIGHT_'+name+'_PASS')
+    try:api=api_factory()
+    except Blocked:
+        print('PREFLIGHT_SUPERVISOR_TOKEN_MISSING');return 1
+    if not api(False):
+        print('PREFLIGHT_'+api.reason);return 1
+    print('CODE_BACKUP_AND_LOCAL_API_PASS_OAUTH_MCP_NOT_TESTED');return 0
+
 def main():
     args=sys.argv[1:];root=Path(__file__).resolve().parent
     try:
@@ -207,9 +232,7 @@ def main():
             write_ack(root,BACK,SOURCE,args[1],args[2],{k:True for k in CHECKS})
             print('ACK_RECORDED_NOT_YET_ACCEPTED_CHECK_FINAL_STATUS');return 0
         if args==['preflight']:
-            verify(root,root/'SHA256SUMS',exact=False);verify(BACK/'component',root/'BASE_SHA256SUMS');verify(SOURCE,root/'BASE_SHA256SUMS')
-            if not LocalAPI()(False):raise Blocked('LOCAL_API_UNAVAILABLE')
-            print('CODE_BACKUP_AND_LOCAL_API_PASS_OAUTH_MCP_NOT_TESTED');return 0
+            return preflight(root,BACK,SOURCE)
         if args!=['deploy','CONFIRM_CORE_RESTART']:raise Blocked('EXPLICIT_RESTART_APPROVAL_REQUIRED')
         old=Path('/config/mcp-ems2/mcp-package/install.sh')
         if old.is_file() and 'ha core stop' in old.read_text():raise Blocked('OLD_STANDALONE_INSTALLER_MUST_BE_WITHDRAWN')

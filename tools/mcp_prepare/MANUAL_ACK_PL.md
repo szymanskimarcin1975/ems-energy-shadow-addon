@@ -104,3 +104,33 @@ Brak niezależnego dostępu awaryjnego pozostaje ryzykiem. Nie jest to gwarancja
 zdalnego odzyskania w każdej awarii. Nie używać starego instalatora jako drugiego
 wykonawcy. Awaryjny ręczny powrót po zgonie procesu wymaga osobnej rekonsyliacji
 stanu Core i kodu — nie kasowania blokad ani powtórnego APPLY.
+
+## Preflight: uprawnienia Terminal & SSH i trwałość Pythona
+
+Terminal & SSH 10.5.0 deklaruje hassio_api: true i rolę manager, ale nie
+homeassistant_api: true. Ten sam SUPERVISOR_TOKEN może więc działać w API
+Supervisora i otrzymać 401 w proxy Core. Nie zastępuj go tokenem użytkownika,
+nie edytuj manifestu oficjalnego dodatku i nie ignoruj odmowy.
+Nowy preflight wypisuje osobno PACKAGE, RECOVERY_CODE, PRODUCTION_CODE oraz
+przyczynę odmowy API. Pierwsza niezaliczona kontrola blokuje dalsze etapy.
+HTTP 401 potwierdza problem autoryzacji API, ale nie potwierdza poprawności kopii.
+
+Bez przyznanego oficjalnie homeassistant_api w środowisku wykonawczym ten
+wariant watchdoga NIE JEST GOTOWY do APPLY. Wymagane jest osobne zatwierdzenie
+środowiska z tą deklaracją; nie jest to przełącznik zwykłych opcji dodatku SSH.
+Alternatywny mechanizm zdrowia bez Core API wymaga osobnej implementacji
+i testów, nie zastąpienia kontroli samym HTTP 200 Supervisora.
+
+Core restart nie odtwarza kontenera Terminal & SSH. Zainstalowany Python
+i odłączony proces pozostają dostępne przy samym restarcie Core, lecz nie
+przy restarcie/aktualizacji/odtworzeniu dodatku SSH, Supervisora lub hosta.
+Pakiet apks: [python3] w opcjach dodatku jest obsługiwaną metodą odtworzenia
+Pythona przy starcie dodatku; nie utrzymuje jednak uruchomionego watchdoga.
+Podczas operacji nie restartować/aktualizować dodatku, Supervisora ani OS.
+Te opcje nie zostały zmienione na produkcji. Brak niezależnego dostępu
+zdalnego nadal oznacza ryzyko wymagające uwzględnienia przed zgodą na restart.
+
+Okno ACK: 900 sekund od gotowości lokalnego API po starcie Core. Powrót
+Nabu Casa i weryfikacja istniejącego OAuth/MCP zużywają to okno; nie przedłużają
+go. Po braku ACK możliwa jest jedna próba przywrócenia zweryfikowanego kodu.
+Nie jest to gwarancja odzyskania Nabu Casa ani działania OAuth.

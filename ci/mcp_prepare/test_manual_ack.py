@@ -208,4 +208,23 @@ class ManualACK(unittest.TestCase):
   while not marker.exists() and time.monotonic()<until:time.sleep(.02)
   info=json.loads(marker.read_text());self.assertEqual(info['pid'],info['sid'])
 
+class CoreAPIAuthentication(unittest.TestCase):
+ def test_denied_token_is_not_accepted_or_replaced(self):
+  import urllib.error
+  with patch.dict(os.environ,{'SUPERVISOR_TOKEN':'synthetic-not-a-real-token'}):api=w.LocalAPI()
+  for code,reason in ((401,'CORE_API_AUTH_DENIED_CHECK_HOMEASSISTANT_API_PERMISSION'),(403,'CORE_API_FORBIDDEN')):
+   with self.subTest(code=code),patch.object(api.http,'open',side_effect=urllib.error.HTTPError('http://supervisor/core/api/',code,'denied',{},None)):
+    self.assertFalse(api());self.assertEqual(api.reason,reason)
+ def test_missing_token_is_blocked(self):
+  with patch.dict(os.environ,{},clear=True),self.assertRaises(w.Blocked):w.LocalAPI()
+ def test_api_success_requires_expected_authenticated_response(self):
+  from unittest.mock import MagicMock
+  with patch.dict(os.environ,{'SUPERVISOR_TOKEN':'synthetic'}):api=w.LocalAPI()
+  response=MagicMock();response.status=200;response.read.return_value=b'{"message":"API running."}'
+  with patch.object(api.http,'open') as opened:
+   opened.return_value.__enter__.return_value=response
+   self.assertTrue(api());self.assertEqual(api.reason,'CORE_API_READY')
+   response.read.return_value=b'{"result":"ok"}'
+   self.assertFalse(api())
+
 if __name__=='__main__':unittest.main(verbosity=2)
