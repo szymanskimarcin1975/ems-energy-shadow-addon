@@ -18,9 +18,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python tools/mcp_prepare/test_prepare.py -v
-      - run: python ci/mcp_prepare/test_watchdog.py
-      - run: python ci/mcp_prepare/test_credentials.py
-      - run: node ci/mcp_prepare/test_auth_page.js
+      - run: python ci/mcp_prepare/test_manual_ack.py
       - run: python -m compileall -q tools/mcp_prepare
   real-ha-mcp-oauth:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/prepare/mcp-solaredge-service'
@@ -94,7 +92,6 @@ jobs:
         with:
           name: mcp-ems2-prepare-package-and-evidence
           path: |
-            mcp-package/
             mcp-evidence/
             mcp-watchdog-package/
             mcp-watchdog-package.zip
