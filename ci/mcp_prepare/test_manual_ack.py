@@ -107,7 +107,7 @@ class ManualACK(unittest.TestCase):
   self.assertEqual(self.calls,before)
  def test_forged_ack_without_diagnostic_not_accepted(self):
   def hook():
-   state=self.state();ack={k:state[k] for k in ('operation_id','challenge','candidate_sha256','diagnostic_operation_id')};ack['checks']={k:True for k in w.CHECKS};w.atomic_json(self.back/w.ACK,ack)
+   state=self.state();ack={k:state[k] for k in ('operation_id','challenge','candidate_sha256','package_manifest_sha256','diagnostic_operation_id')};ack['checks']={k:True for k in w.CHECKS};w.atomic_json(self.back/w.ACK,ack)
   self.hook=hook;self.assertFalse(self.controller().execute());self.assertEqual(self.calls.count('start'),2)
  def test_corrupted_diagnostic_after_ack_not_accepted(self):
   def hook():
@@ -115,8 +115,17 @@ class ManualACK(unittest.TestCase):
   self.hook=hook;self.assertFalse(self.controller().execute());self.assertEqual(self.calls.count('start'),2)
  def test_ack_from_other_update_not_accepted(self):
   def hook():
-   self.diagnostic();state=self.state();ack={k:state[k] for k in ('operation_id','challenge','candidate_sha256','diagnostic_operation_id')};ack['operation_id']='0'*32;ack['checks']={k:True for k in w.CHECKS};w.atomic_json(self.back/w.ACK,ack)
+   self.diagnostic();state=self.state();ack={k:state[k] for k in ('operation_id','challenge','candidate_sha256','package_manifest_sha256','diagnostic_operation_id')};ack['operation_id']='0'*32;ack['checks']={k:True for k in w.CHECKS};w.atomic_json(self.back/w.ACK,ack)
   self.hook=hook;self.assertFalse(self.controller().execute())
+ def test_other_valid_package_cannot_ack_same_mcp_code(self):
+  def hook():
+   self.diagnostic();(self.root/'another-file.txt').write_text('another valid package')
+   (self.root/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in sorted(self.root.iterdir()) if p.is_file() and p.name!='SHA256SUMS'))
+   with self.assertRaises(w.Blocked):self.ack()
+  self.hook=hook;self.assertFalse(self.controller().execute())
+ def test_watchdog_runtime_error_attempts_one_recovery(self):
+  def hook():raise RuntimeError('synthetic watchdog failure')
+  self.hook=hook;self.assertFalse(self.controller().execute());self.assertEqual(self.calls.count('start'),2);self.assertEqual(self.state()['phase'],'ROLLED_BACK_API_ONLY_MCP_UNVERIFIED')
  def test_core_start_failure_restores_once(self):
   starts=0
   def core(a):

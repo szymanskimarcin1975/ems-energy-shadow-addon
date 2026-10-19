@@ -94,7 +94,7 @@ def diagnostic_valid(root,config,state):
     return state['waiting_started_at']<=stamp<=time.time()+5
 
 def valid_ack(ack,state):
-    return set(ack)=={'operation_id','challenge','candidate_sha256','diagnostic_operation_id','checks'} and all(ack.get(k)==state[k] for k in ('operation_id','challenge','candidate_sha256','diagnostic_operation_id')) and isinstance(ack['checks'],dict) and set(ack['checks'])==set(CHECKS) and all(ack['checks'][k] is True for k in CHECKS)
+    return set(ack)=={'operation_id','challenge','candidate_sha256','package_manifest_sha256','diagnostic_operation_id','checks'} and all(ack.get(k)==state[k] for k in ('operation_id','challenge','candidate_sha256','package_manifest_sha256','diagnostic_operation_id')) and isinstance(ack['checks'],dict) and set(ack['checks'])==set(CHECKS) and all(ack['checks'][k] is True for k in CHECKS)
 
 def write_ack(root,backup,source,op,challenge,checks,clock=time.monotonic,diag=diagnostic_valid):
     # Separate short lock: does not release/compete with the Core deployment lock.
@@ -106,10 +106,11 @@ def write_ack(root,backup,source,op,challenge,checks,clock=time.monotonic,diag=d
         if not isinstance(checks,dict) or set(checks)!=set(CHECKS) or not all(checks[k] is True for k in CHECKS):raise Blocked('ALL_MCP_CHECKS_REQUIRED')
         verify(root,root/'SHA256SUMS',exact=False)
         verify(source,root/'CANDIDATE_SHA256SUMS')
+        if digest(root/'SHA256SUMS')!=state['package_manifest_sha256']:raise Blocked('WRONG_DEPLOYMENT_PACKAGE')
         if digest(root/'mcp-1.18.0-ems.2-prepare.zip')!=state['candidate_sha256']:raise Blocked('WRONG_PACKAGE')
         if not diag(root,source.parent.parent,state):raise Blocked('FRESH_MCP_DIAGNOSTIC_REQUIRED')
         if clock()>=state['deadline_monotonic']:raise Blocked('ACK_EXPIRED_DURING_CHECK')
-        value={k:state[k] for k in ('operation_id','challenge','candidate_sha256','diagnostic_operation_id')};value['checks']=checks
+        value={k:state[k] for k in ('operation_id','challenge','candidate_sha256','package_manifest_sha256','diagnostic_operation_id')};value['checks']=checks
         fd=os.open(backup/ACK,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
         with os.fdopen(fd,'w') as f:json.dump(value,f);f.flush();os.fsync(f.fileno())
         fd=os.open(backup,os.O_RDONLY|os.O_DIRECTORY)
@@ -142,6 +143,7 @@ class ManualDeployment(Deployment):
                     valid=valid_ack(ack,self.state)
                 except (OSError,ValueError,KeyError,Blocked):valid=False
                 if valid:
+                    if digest(self.root/'SHA256SUMS')!=self.state['package_manifest_sha256']:raise Blocked('DEPLOYMENT_PACKAGE_CHANGED')
                     verify(self.source,self.root/'CANDIDATE_SHA256SUMS')
                     if self.diagnostic(self.root,self.source.parent.parent,self.state) and self.clock()<self.state['deadline_monotonic']:
                         os.rename(self.backup/ACK,self.backup/'manual-ack-consumed.json')
@@ -158,7 +160,7 @@ class ManualDeployment(Deployment):
             self.swap_stopped(original,'manual-failed-candidate')
             started=self.core('start')
             ok=started and self.wait_health(False)
-        except (OSError,ValueError,Blocked):ok=False
+        except Exception:ok=False
         self.event('ROLLED_BACK_API_ONLY_MCP_UNVERIFIED' if ok else 'RECOVERY_FAILED_OPERATOR_REQUIRED')
         return False
     def execute(self):
@@ -170,7 +172,7 @@ class ManualDeployment(Deployment):
             verify(self.source,self.root/'BASE_SHA256SUMS')
             if not (self.backup/'PREPARED').is_file():raise Blocked('PREPARE_REQUIRED')
             if not self.health(False):raise Blocked('LOCAL_CORE_API_BASELINE_REQUIRED')
-            self.state={'operation_id':secrets.token_hex(16),'challenge':secrets.token_hex(6),'candidate_sha256':digest(self.root/'mcp-1.18.0-ems.2-prepare.zip'),'rollback_attempted':False,'watchdog_pid':os.getpid()}
+            self.state={'operation_id':secrets.token_hex(16),'challenge':secrets.token_hex(6),'candidate_sha256':digest(self.root/'mcp-1.18.0-ems.2-prepare.zip'),'package_manifest_sha256':digest(self.root/'SHA256SUMS'),'rollback_attempted':False,'watchdog_pid':os.getpid()}
             self.state['diagnostic_operation_id']=self.state['operation_id']
             if (self.source.parent.parent/'ems_prepare_backups'/self.state['diagnostic_operation_id']).exists():raise Blocked('DIAGNOSTIC_ID_ALREADY_EXISTS')
             self.event('ARMED')
@@ -186,13 +188,13 @@ class ManualDeployment(Deployment):
                     if self.wait_ack():return True
             except Blocked:
                 self.event('UNKNOWN_REQUIRES_OPERATOR');return False
-            except (OSError,ValueError,KeyError):
+            except Exception:
                 self.event('WATCHDOG_ERROR_ATTEMPT_ONE_RECOVERY')
             return self.rollback_once(original)
 
 def status(backup):
     s=read_json(backup/STATE)
-    return {k:s.get(k) for k in ('phase','operation_id','challenge','candidate_sha256','diagnostic_operation_id','deadline_utc','rollback_attempted')}
+    return {k:s.get(k) for k in ('phase','operation_id','challenge','candidate_sha256','package_manifest_sha256','diagnostic_operation_id','deadline_utc','rollback_attempted')}
 
 def main():
     args=sys.argv[1:];root=Path(__file__).resolve().parent

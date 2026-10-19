@@ -79,29 +79,6 @@ async def main(phase):
    (OUT/(phase+'-tool-names.json')).write_text(json.dumps(sorted(names)))
    check('tools_list_correct',NAMES.issubset(names) if phase!='rollback' else not NAMES.intersection(names))
    check('old_tools_retained',{'ems_admin_options_inspect','get_state','call_service'}.issubset(names))
-   # Watchdog client runs in an independent worker, real HTTP + OAuth validator.
-   # Supervisor proxy is mapped to real HA REST API; no Supervisor in CI.
-   import importlib.util
-   spec=importlib.util.spec_from_file_location('watchdog_under_test',ROOT/'tools/mcp_prepare/watchdog.py')
-   wd=importlib.util.module_from_spec(spec);spec.loader.exec_module(wd)
-   probe=wd.Health.__new__(wd.Health)
-   import urllib.request
-   probe.http=urllib.request.build_opener(urllib.request.ProxyHandler({}),wd.NoRedirect())
-   probe.host='synthetic.invalid';probe.credentials={'access_token':token(admin)}
-   refresh=await hass.auth.async_create_refresh_token(admin)
-   api_token=hass.auth.async_create_access_token(refresh);tokens.append(api_token)
-   probe.supervisor_token=api_token
-   original_request=probe.request
-   def local_request(url,body=None,headers=None):
-    url=url.replace('http://supervisor/core/api/','http://127.0.0.1:8123/api/').replace('http://homeassistant:8123/','http://127.0.0.1:8123/')
-    return original_request(url,body,headers)
-   probe.request=local_request
-   check('watchdog_independent_authenticated_MCP_API_admin_read',await asyncio.to_thread(probe,phase!='rollback'))
-   probe.credentials={'access_token':token(admin,exp=int(time.time())-1)}
-   check('watchdog_expired_OAuth_rejected',not await asyncio.to_thread(probe,phase!='rollback'))
-   probe.credentials={'access_token':token(other)}
-   check('watchdog_nonadmin_OAuth_rejected',not await asyncio.to_thread(probe,phase!='rollback'))
-
    for auth in ({},headers(admin,exp=int(time.time())-1),headers(admin,aud='wrong-resource')):
     status,_=await rpc('tools/list',auth=auth);check('invalid_token_denied',status==401)
    async def call(name,id,auth=None,extra=None):

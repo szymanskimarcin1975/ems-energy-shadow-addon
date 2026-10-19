@@ -54,7 +54,7 @@ jobs:
           python ci/mcp_prepare/reconstruct_base.py mcp-upstream/custom_components/mcp_server_http_transport mcp-base
           python tools/mcp_prepare/build_package.py --source mcp-base --output mcp-package
           python ci/mcp_prepare/test_installer.py mcp-base
-          python tools/mcp_prepare/build_watchdog.py mcp-package mcp-watchdog-package
+          python tools/mcp_prepare/build_manual_ack.py mcp-package mcp-watchdog-package
           cd mcp-package
           sha256sum -c SHA256SUMS
       - name: Install isolated HA and its exact default requirements
@@ -69,8 +69,6 @@ jobs:
           requirements=sorted({q for d in domains for q in json.loads((root/d/'manifest.json').read_text()).get('requirements',[])})
           subprocess.check_call([sys.executable,'-m','pip','install',*requirements])
           PY
-      - name: Verify dedicated-client revocation against pinned actual OIDC JWT verifier
-        run: python ci/mcp_prepare/test_oidc_revocation.py oidc-upstream/custom_components/oidc_provider/token_validator.py
       - name: Actual HA HTTP MCP OAuth boundary and interrupted request
         run: |
           python ci/mcp_prepare/real_mcp_test.py prepare
