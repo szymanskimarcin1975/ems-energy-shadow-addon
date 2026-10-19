@@ -82,13 +82,22 @@ class DeploymentTests(unittest.TestCase):
   self.assertEqual(self.calls,[])
  def test_disconnect_does_not_kill_detached_process(self):
   marker=self.root/'survived'
-  # Actual new session, stdin closed and parent exited. Only writes temp marker.
-  code='import subprocess,sys;subprocess.Popen([sys.executable,"-c",'+repr('import time,pathlib;time.sleep(.2);pathlib.Path('+repr(str(marker))+').write_text("ok")')+'],start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)'
-  subprocess.run([sys.executable,'-c',code],check=True)
+  script=(ROOT/'tools/mcp_prepare/watchdog-launch.sh').read_text().replace('BACK=/config/mcp_prepare_ems2_recovery','BACK='+str(self.back))
+  (self.package/'watchdog-launch.sh').write_text(script)
+  worker='import time,pathlib,os,json;time.sleep(.2);pathlib.Path('+repr(str(marker))+').write_text(json.dumps({"pid":os.getpid(),"sid":os.getsid(0)}))'
+  (self.package/'watchdog.py').write_text(worker)
+  # Actual nohup+setsid launcher. This temporary worker has no HA access.
+  proc=subprocess.run(['sh',str(self.package/'watchdog-launch.sh'),'CONFIRM_CORE_RESTART'],check=True,capture_output=True,text=True)
+  self.assertIn('WATCHDOG_QUEUED',proc.stdout)
   import time
   until=time.monotonic()+3
   while not marker.exists() and time.monotonic()<until:time.sleep(.02)
   self.assertTrue(marker.exists())
+  info=json.loads(marker.read_text());self.assertEqual(info['pid'],info['sid'])
+ def test_launcher_requires_explicit_restart_argument(self):
+  p=ROOT/'tools/mcp_prepare/watchdog-launch.sh'
+  result=subprocess.run(['sh',str(p)],capture_output=True,text=True)
+  self.assertNotEqual(result.returncode,0);self.assertIn('EXPLICIT_RESTART_CONFIRMATION_REQUIRED',result.stdout)
 
 class HealthTests(unittest.TestCase):
  def probe(self,behavior='ok',candidate=True):
