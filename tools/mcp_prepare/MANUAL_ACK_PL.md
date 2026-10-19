@@ -43,7 +43,7 @@ sukcesu. Zachowuje kopię poprzedniego i ewentualnie nieudanego kodu poza
 custom_components. Nie przywraca .storage, SQLite, EMS2, CWU, CO ani G13.
 
 Maksymalnie300s oczekiwania na Core/API po starcie, pojedyncze haCLI do90s.
-Po uzyskaniu API rozpoczyna się NIEPRZEDŁUŻALNE okno600s na ręczny ACK.
+Po uzyskaniu lokalnego API rozpoczyna się NIEPRZEDŁUŻALNE okno900s (15 minut) na ręczny ACK. Dostępność API nie dowodzi powrotu Nabu Casa ani gotowości OAuth/MCP. Opóźniony powrót zdalnego połączenia skraca rzeczywisty czas operatora; brak ACK powoduje rollback nawet gdy Core działa.
 Status odczytuje się po powrocie Nabu Casa, z katalogu nowego pakietu:
 
     sh ack.sh status
