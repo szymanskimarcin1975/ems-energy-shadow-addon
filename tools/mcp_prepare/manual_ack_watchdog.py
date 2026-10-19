@@ -119,7 +119,7 @@ def write_ack(root,backup,source,op,challenge,checks,clock=time.monotonic,diag=d
         return value
 
 class ManualDeployment(Deployment):
-    def __init__(self,*args,ack_seconds=600,diagnostic=diagnostic_valid,**kwargs):
+    def __init__(self,*args,ack_seconds=900,diagnostic=diagnostic_valid,**kwargs):
         super().__init__(*args,**kwargs)
         if not 30<=ack_seconds<=900:raise Blocked('ACK_WINDOW_OUT_OF_RANGE')
         self.ack_seconds=ack_seconds;self.diagnostic=diagnostic;self.state={}
