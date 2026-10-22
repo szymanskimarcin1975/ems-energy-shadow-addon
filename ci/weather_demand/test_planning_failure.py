@@ -48,7 +48,7 @@ class FailureTests(unittest.TestCase):
  def test_below_reserve_restart_and_readonly_bridge(self):
   s,pred,at,cfg,opt=fixture();s['sensor.example_b1_soc']['state']='4.444445'
   cfg['include_current_slot']=True
-  s['sensor.example_pv']['attributes']['detailedHourly'].insert(0,dict(period_start=T.isoformat(),pv_estimate=1,pv_estimate10=.5))
+  s['sensor.example_pv']['attributes']['detailedHourly'].insert(0,dict(period_start=T.isoformat(),pv_estimate=3,pv_estimate10=2))
   cfg.update(household_history_enabled=True,m1_scope_evidence={'scope':'whole_building_grid_exchange','confirmed_by':'installation_owner','confirmed_at':(T-timedelta(days=1)).isoformat()})
   approval={'soc_operating_bounds':{'minimum':5,'maximum':95,'owner_approved':True}}
   with tempfile.TemporaryDirectory() as td:
@@ -64,6 +64,9 @@ class FailureTests(unittest.TestCase):
        if prev<.46:self.assertEqual(row['discharge_ac_kwh'],0)
        prev=row['stored_kwh']
      b=build(r,{'expected_fingerprint':r['planning_config_fingerprint'],'future_day_type':'workday','pv_scenario':'pv_estimate10'},T,0)
-     self.assertIn(b['status'],('PLAN_HOLD_NO_NEW_COMMAND','PLAN_REQUEST_PREPARED'))
+     self.assertEqual(b['status'],'PLAN_REQUEST_PREPARED')
+     self.assertTrue(b['pending_request']['request_id'].startswith('plan_'))
+     self.assertEqual(b['pending_request']['planning_config_fingerprint'],r['planning_config_fingerprint'])
+     self.assertTrue(b['pending_request']['plan_id'])
      self.assertEqual(planner.c.execute('PRAGMA integrity_check').fetchone()[0],'ok')
     finally:planner.c.close()
