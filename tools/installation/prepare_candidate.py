@@ -62,11 +62,13 @@ def build(source, output, root):
     archive(output/'solaredge-4.0.4-recovery.zip', {prefix+k:v for k,v in originals.items()})
     archive(output/'solaredge-4.0.4-ems.1-review.zip', {prefix+k:v for k,v in (originals|overrides).items()})
     addon = root/'ems_shadow'
-    archive(output/'ems-shadow-0.1.4-observation.42-source.zip',
+    addon_version=next(line.split(':',1)[1].strip() for line in (addon/'config.yaml').read_text().splitlines() if line.startswith('version:'))
+    gateway_version=json.loads((root/'custom_components/ems_epoch_gateway/manifest.json').read_text())['version']
+    archive(output/f'ems-shadow-{addon_version}-source.zip',
         {'ems_shadow/'+p.relative_to(addon).as_posix():p.read_bytes()
          for p in addon.rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc'})
     gateway = root/'custom_components/ems_epoch_gateway'
-    archive(output/'ems-epoch-gateway-0.2.0-rc.3.zip',
+    archive(output/f'ems-epoch-gateway-{gateway_version}.zip',
         {'custom_components/ems_epoch_gateway/'+p.relative_to(gateway).as_posix():p.read_bytes()
          for p in gateway.rglob('*') if p.is_file() and '__pycache__' not in p.parts})
     installer={'EMS-Companion.ps1':(root/'tools/installation/EMS-Companion.ps1').read_bytes()}
@@ -74,7 +76,7 @@ def build(source, output, root):
     installer['payload/SHA256.json']=(json.dumps({k:hashlib.sha256(v).hexdigest() for k,v in overrides.items()},indent=2)+'\n').encode()
     archive(output/'ems-companion-windows-installer.zip',installer)
     (output/'INSTALLATION-STATE.json').write_text(json.dumps(dict(
-        addon_version='0.1.4-observation.42', gateway_version='0.2.0-rc.3',
+        addon_version=addon_version, gateway_version=gateway_version,
         active_default=False, owner_transition_performed=False, installed=False,
         companion_entry_opt_in_required=True, device_commissioning_required=True), indent=2)+'\n')
     (output/'SHA256SUMS').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n'
