@@ -1,0 +1,33 @@
+{
+  "snapshot_at": "2026-10-19T21:48:55.740003+02:00",
+  "main_power_total_w": 1880,
+  "phase_sum_w": 1881,
+  "phase_sum_difference_w": -1,
+  "synchronous_phase_snapshot": false,
+  "phase_c_last_reported": "2026-10-19T18:58:51.105667+00:00",
+  "main_energy_window": {
+    "start": {
+      "state": "213.81",
+      "last_changed": "2026-10-19T19:35:00+00:00"
+    },
+    "end": {
+      "state": "214.17",
+      "last_changed": "2026-10-19T19:48:20.317384+00:00"
+    },
+    "delta_kwh": 0.3599999999999852,
+    "recorder_change_interval_median_seconds": 30.305,
+    "synthetic_window_start_row_excluded_from_interval_calculation": true,
+    "physical_sample_interval_proven": false
+  },
+  "export_counter_stationary": true,
+  "direction_inference": "consistent with consuming/import in observed window; no calibration or phase-switch experiment",
+  "cost": {
+    "at": "2026-10-19T21:48:56.653190+02:00",
+    "dolina_kwh": 13.461,
+    "srednia_kwh": 5.949,
+    "droga_kwh": 6.28,
+    "calculated_pln": 23.55,
+    "actual_cost": "23.55",
+    "duplicate_cost": "0.0"
+  }
+}

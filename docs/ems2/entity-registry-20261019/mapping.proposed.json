@@ -1,0 +1,290 @@
+{
+  "schema": "EMS2_ENTITY_MAPPING_PROPOSAL_V1",
+  "version": "2026-10-19.1",
+  "installation": "Home Assistant production, read-only inventory",
+  "deployable": false,
+  "apply_approved": false,
+  "mode": "READ_ONLY",
+  "execution_authorized": false,
+  "owner": "LEGACY",
+  "active_permitted": false,
+  "automatic_entity_creation": false,
+  "roles": {
+    "boiler.total_power": "sensor.0x286847fffef5f4e9_power",
+    "boiler.import_energy": "sensor.0x286847fffef5f4e9_energy",
+    "boiler.export_energy_diagnostic": "sensor.0x286847fffef5f4e9_produced_energy",
+    "boiler.phase_a_power": "sensor.0x286847fffef5f4e9_power_a",
+    "boiler.phase_b_power": "sensor.0x286847fffef5f4e9_power_b",
+    "boiler.phase_c_power": "sensor.0x286847fffef5f4e9_power_c",
+    "heatpump.submeter_power": "sensor.0xa4c1389eebc44e6a_power_a",
+    "heatpump.submeter_energy": "sensor.0xa4c1389eebc44e6a_energy_a",
+    "grid.net_power": "sensor.solaredge_i1_m1_ac_power",
+    "grid.import_energy": "sensor.solaredge_i1_m1_ac_energy_imported",
+    "grid.export_energy": "sensor.solaredge_i1_m1_ac_energy_exported",
+    "inverter.ac_power": "sensor.solaredge_i1_ac_power",
+    "inverter.dc_power": "sensor.solaredge_i1_dc_power",
+    "inverter.status": "sensor.solaredge_i1_status",
+    "battery.soc": "sensor.solaredge_i1_b1_state_of_energy",
+    "battery.power": "sensor.solaredge_i1_b1_dc_power",
+    "battery.status": "sensor.solaredge_i1_b1_status",
+    "battery.max_charge": "sensor.solaredge_i1_b1_max_charge_power",
+    "battery.peak_charge": "sensor.solaredge_i1_b1_peak_charge_power",
+    "battery.max_discharge": "sensor.solaredge_i1_b1_max_discharge_power",
+    "battery.peak_discharge": "sensor.solaredge_i1_b1_peak_discharge_power",
+    "battery.capacity": "sensor.solaredge_i1_b1_maximum_energy",
+    "battery.temperature": "sensor.solaredge_i1_b1_average_temperature",
+    "control.command": "select.solaredge_i1_storage_command_mode",
+    "control.mode": "select.solaredge_i1_storage_control_mode",
+    "control.default": "select.solaredge_i1_storage_default_mode",
+    "control.charge_limit": "number.solaredge_i1_storage_charge_limit",
+    "control.discharge_limit": "number.solaredge_i1_storage_discharge_limit",
+    "control.timeout": "number.solaredge_i1_storage_command_timeout",
+    "control.reserve": "number.solaredge_i1_backup_reserve",
+    "safety.owner": "input_select.ems_battery_control_owner",
+    "safety.authorization": "input_boolean.ems_battery_execution_authorized",
+    "dhw.temperature": "sensor.sterownik_pompy_temp_cwu",
+    "dhw.setpoint": "number.sterownik_pompy_nastawa_temperatury_cwu",
+    "dhw.setpoint_echo": "sensor.sterownik_pompy_potwierdzenie_cwu",
+    "heating.setpoint": "number.sterownik_pompy_nastawa_temperatury_co",
+    "heating.supply_water": "sensor.sterownik_pompy_sterownik_pompy_temperatura_wyjsciowa_wody",
+    "heating.return_water": "sensor.sterownik_pompy_sterownik_pompy_temperatura_wejsciowa_wody",
+    "heating.radiator_supply": "sensor.0xa4c138e823c53c00_temperature",
+    "heating.radiator_return": "sensor.0xa4c1383684dacee8_temperature",
+    "heating.buffer_supply": "sensor.0xa4c138c18fd67065_temperature",
+    "heating.buffer_return": "sensor.cwu_zasilacz_temperatura",
+    "heatpump.compressor_hz": "sensor.sterownik_pompy_hz_sprezarki",
+    "heatpump.circulation": "binary_sensor.sterownik_pompy_pompka_obiegowa",
+    "heatpump.flow": "sensor.sterownik_pompy_przeplyw_wody",
+    "heatpump.error": "sensor.sterownik_pompy_sterownik_pompy_kod_bledu_surowy",
+    "weather.local_temperature": "sensor.0xa4c1385d4d396787_temperature",
+    "weather.forecast": "weather.forecast_dom",
+    "pv.forecast_today": "sensor.solcast_pv_forecast_prognoza_na_dzisiaj",
+    "pv.forecast_tomorrow": "sensor.solcast_pv_forecast_prognoza_na_jutro",
+    "pv.forecast_issue_time": "sensor.solcast_pv_forecast_ostatnia_aktualizacja_api",
+    "tariff.workday": "binary_sensor.workday_sensor_pl",
+    "tariff.tomorrow_workday": "binary_sensor.workday_jutro",
+    "tariff.selector": "select.zuzycie_dzienne_g13",
+    "cost.today": "sensor.koszt_poboru_dzisiejszy",
+    "building.load_conditional": "sensor.zuzycie_domu_live"
+  },
+  "boiler": {
+    "authoritative_ieee": "0x286847fffef5f4e9",
+    "scope": "entire boiler room; all phases A/B/C",
+    "source": "sensor.0x286847fffef5f4e9_power",
+    "energy_source": "sensor.0x286847fffef5f4e9_energy",
+    "phase_power_entities": [
+      "sensor.0x286847fffef5f4e9_power_a",
+      "sensor.0x286847fffef5f4e9_power_b",
+      "sensor.0x286847fffef5f4e9_power_c"
+    ],
+    "phase_voltage_entities": [
+      "sensor.0x286847fffef5f4e9_voltage_a",
+      "sensor.0x286847fffef5f4e9_voltage_b",
+      "sensor.0x286847fffef5f4e9_voltage_c"
+    ],
+    "phase_current_entities": [
+      "sensor.0x286847fffef5f4e9_current_a",
+      "sensor.0x286847fffef5f4e9_current_b",
+      "sensor.0x286847fffef5f4e9_current_c"
+    ],
+    "aggregation": "Prefer native total. Phase sum is cross-check/fallback only after freshness/skew/range checks; never total+phase sum",
+    "submeter_ieee": "0xa4c1389eebc44e6a",
+    "submeter_relation": "SUBSET_OF_BOILER",
+    "add_submeter_to_boiler_total": false,
+    "dedicated_active_phase_feedback": null,
+    "phase_energy_entities": null,
+    "direction": {
+      "provisional": "positive total power and rising energy during load; produced_energy stationary",
+      "calibrated": false
+    },
+    "phase_sum_tolerance": {
+      "watts": 5,
+      "relative": 0.01,
+      "status": "PROPOSED_ONLY; rounding/asynchrony tolerance, not deployed"
+    },
+    "missing_phase_policy": "No imputation, no zero-fill, no partial phase fallback",
+    "freshness_blocker": "power_c retains old 0 W since 18:58:51Z despite fresh aggregate; synchronous all-phase measurement unconfirmed"
+  },
+  "heatpump": {
+    "submeter_power": "sensor.0xa4c1389eebc44e6a_power_a",
+    "submeter_energy": "sensor.0xa4c1389eebc44e6a_energy_a",
+    "alternative_submeter_total_power": "sensor.0xa4c1389eebc44e6a_power_ab",
+    "use_computed_electrical_power_for_billing": false,
+    "dhw_priority": {
+      "required": true,
+      "installer_setting_verified": false
+    },
+    "dhw_schedule": {
+      "target_c": 50,
+      "weekday_target_by": "04:00 Europe/Warsaw",
+      "deployed_target_windows": {
+        "weekday": [
+          "00:00–07:00",
+          "13:00–16:00"
+        ],
+        "saturday": [
+          "17:00–21:00"
+        ],
+        "sunday": [
+          "11:00–15:00"
+        ]
+      },
+      "physical_target_achievement_verified": false
+    },
+    "mode_entity": null,
+    "compressor_running_direct_entity": null,
+    "setpoint_unit_c_inferred_from_deployed_esphome": true
+  },
+  "normalization": {
+    "internal_power": "W",
+    "internal_energy": "kWh",
+    "internal_temperature": "degC",
+    "kw_to_w": 1000,
+    "wh_to_kwh": 0.001,
+    "mwh_to_kwh": 1000,
+    "grid_sign": "M1 negative import / positive export",
+    "battery_sign": "existing code positive charge / negative discharge; current zero cannot independently validate",
+    "unavailable": "reject; never float(0) fallback",
+    "snapshot_time": "last_reported is HA report time, not device measurement time",
+    "double_counting": "Do not add battery to inverter AC-minus-M1; do not add heatpump to boiler; do not add aggregate plus phases"
+  },
+  "tariff": {
+    "zone": "Europe/Warsaw",
+    "working_prices_pln_kwh": {
+      "dolina": 0.6368,
+      "szczyt_przedpoludniowy": 0.9235,
+      "szczyt_popoludniowy": 1.5109
+    },
+    "price_source": "deployed HA configuration; contract/tariff invoice not verified",
+    "schedule": {
+      "workday": {
+        "07:00–13:00": "szczyt_przedpoludniowy",
+        "16:00–21:00": "szczyt_popoludniowy",
+        "otherwise": "dolina"
+      },
+      "nonworkday": "dolina all day"
+    },
+    "workday_unavailable": "BLOCK, do not assume weekend",
+    "boiler_utility_meters": {
+      "status": "WRONG_SCOPE_CURRENTLY",
+      "current_source": "sensor.0xa4c1389eebc44e6a_energy_a",
+      "proposed_source": "sensor.0x286847fffef5f4e9_energy",
+      "migration": "Separate approved correction with historical segment boundary; no reset or retroactive merge automatically"
+    }
+  },
+  "adapter42": {
+    "compatible_entity_ids": "SolarEdge identifiers/units/options match existing battery_executor_config; no write tested",
+    "mode": "READ_ONLY",
+    "gateway_contract": "EMS2_COMPOUND_V28",
+    "numerical_control_limits": "HA ranges are not BMS safety limits",
+    "blocked_modes": [
+      "Discharge to Maximize Export"
+    ],
+    "pin_update": "Do not use this document to modify planner/executor fingerprints; actual options.json still required"
+  },
+  "missing": [
+    {
+      "role": "boiler.phase_import_energy_A_B_C",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "Main meter device registry exposes only total energy/produced_energy, no per-phase energy entities; do not invent IDs",
+      "solution": "Use confirmed aggregate counter; propose vendor expose review separately"
+    },
+    {
+      "role": "boiler.active_phase_selector",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "No dedicated ATS phase-selection feedback confirmed; physical ATS topology supplied by owner",
+      "solution": "Observe existing phase powers/voltages without forcing phase loss or switching"
+    },
+    {
+      "role": "heatpump.direct_operating_mode",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "Old rotenso mode entities are restored/unavailable; active ESPHome device has no direct CWU/CO mode entity",
+      "solution": "Review supported read register in vendor mapping, do not infer definite mode from temperature"
+    },
+    {
+      "role": "heatpump.direct_compressor_binary",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "Old binary rotenso unavailable; current compressor frequency present",
+      "solution": "Derived running=Hz>0 can be proposed only as inferred signal"
+    },
+    {
+      "role": "heatpump.native_outdoor_temperature",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "Old Rotenso outdoor readings unavailable; external Zigbee temperature exists",
+      "solution": "Use explicit external location/provenance; no automatic substitution as pump-native reading"
+    },
+    {
+      "role": "heatpump.dhw_installer_priority",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "Installer DHW priority is owner requirement, not directly verified by current HA entity",
+      "solution": "Read-only documentation/installer verification later"
+    },
+    {
+      "role": "building.load_forecast_entity",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "EMS2 forecast resides in diagnostic files/SQLite, no standalone forecast entity confirmed",
+      "solution": "Consume versioned planner report via existing architecture; do not create helper automatically"
+    },
+    {
+      "role": "building.calibrated_load_forecast",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "Current persistence model not calibrated; whole-building history conditional AC-minus-M1",
+      "solution": "Use fresh matched hourly history and independent forecast validation"
+    },
+    {
+      "role": "dhw_co.separate_energy_history",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "Electrical submeter has no verified CWU/CO separation and direct mode is missing",
+      "solution": "Acquire trustworthy mode labels before training separate loads"
+    },
+    {
+      "role": "pure_pv.power",
+      "entity_id": null,
+      "status": "BRAK",
+      "finding": "AC/DC inverter powers do not establish pure PV separate from battery in hybrid installation",
+      "solution": "Confirm inverter topology and PV-only source semantics before control"
+    }
+  ],
+  "dependencies": {
+    "sensor.solaredge_pv_dc_power_w": [
+      "sensor.solaredge_i1_dc_power"
+    ],
+    "sensor.zuzycie_domu_live": [
+      "sensor.solaredge_i1_ac_power",
+      "sensor.solaredge_i1_m1_ac_power"
+    ],
+    "sensor.koszt_poboru_dzisiejszy": [
+      "sensor.solaredge_i1_m1_zuzycie_dzienne_g13_dolina",
+      "sensor.solaredge_i1_m1_zuzycie_dzienne_g13_szczyt_przedpoludniowy",
+      "sensor.solaredge_i1_m1_zuzycie_dzienne_g13_szczyt_popoludniowy"
+    ],
+    "sensor.sterownik_pompy_potwierdzenie_cwu": [
+      "number.sterownik_pompy_nastawa_temperatury_cwu"
+    ],
+    "sensor.sterownik_pompy_potwierdzenie_co": [
+      "number.sterownik_pompy_nastawa_temperatury_co"
+    ],
+    "sensor.sterownik_pompy_pompa_ciepla_pobor_mocy_elektrycznej": [
+      "sensor.sterownik_pompy_prad_sprezarki",
+      "sensor.sterownik_pompy_sterownik_pompy_napiecie_sieciowe"
+    ],
+    "sensor.sterownik_pompy_pompa_ciepla_aktualna_moc_termiczna": [
+      "sensor.sterownik_pompy_przeplyw_wody",
+      "sensor.sterownik_pompy_sterownik_pompy_temperatura_wejsciowa_wody",
+      "sensor.sterownik_pompy_sterownik_pompy_temperatura_wyjsciowa_wody"
+    ],
+    "sensor.sterownik_pompy_pompa_ciepla_realny_cop_live": [
+      "sensor.sterownik_pompy_pompa_ciepla_aktualna_moc_termiczna",
+      "sensor.sterownik_pompy_pompa_ciepla_pobor_mocy_elektrycznej"
+    ]
+  }
+}

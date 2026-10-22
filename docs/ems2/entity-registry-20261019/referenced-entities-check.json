@@ -1,0 +1,41 @@
+{
+  "checked_at": "2026-10-19",
+  "scope": "Literal entity references from EMS automation configs; service action identifiers excluded. Absence in state machine is not proof of deletion from entity registry.",
+  "results": [
+    {
+      "entity_id": "number.modbus_limit_mocy",
+      "exists_in_state_machine": false,
+      "state": "unknown",
+      "status": "BRAK_W_MASZYNIE_STANOW",
+      "context": "Historical/disabled automation reference; do not create automatically"
+    },
+    {
+      "entity_id": "binary_sensor.workday_sensor",
+      "exists_in_state_machine": false,
+      "state": "unknown",
+      "status": "BRAK_W_MASZYNIE_STANOW",
+      "context": "Historical/disabled automation reference; do not create automatically"
+    },
+    {
+      "entity_id": "sensor.solcast_forecast_tomorrow",
+      "exists_in_state_machine": false,
+      "state": "unknown",
+      "status": "BRAK_W_MASZYNIE_STANOW",
+      "context": "Historical/disabled automation reference; do not create automatically"
+    },
+    {
+      "entity_id": "sensor.solcast_forecast_today",
+      "exists_in_state_machine": false,
+      "state": "unknown",
+      "status": "BRAK_W_MASZYNIE_STANOW",
+      "context": "Historical/disabled automation reference; do not create automatically"
+    },
+    {
+      "entity_id": "climate.woda_uzytkowa",
+      "exists_in_state_machine": false,
+      "state": "unknown",
+      "status": "BRAK_W_MASZYNIE_STANOW",
+      "context": "Historical/disabled automation reference; do not create automatically"
+    }
+  ]
+}

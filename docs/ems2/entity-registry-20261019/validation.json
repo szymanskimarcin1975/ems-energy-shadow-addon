@@ -1,0 +1,12 @@
+{
+  "json_valid": true,
+  "all_mapping_entity_ids_directly_confirmed": true,
+  "mapped_roles": 56,
+  "boiler_authoritative_ieee": "0x286847fffef5f4e9",
+  "heatpump_added_to_boiler": false,
+  "phase_entities_count": 3,
+  "proposed_mapping_deployable": false,
+  "production_writes": 0,
+  "ci_regression_repeated": false,
+  "scope": "documentation and data validation only; no device or control tests"
+}
