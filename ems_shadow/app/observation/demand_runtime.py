@@ -19,41 +19,6 @@ from boiler_offline.g13 import tariff
 
 ZONE = ZoneInfo('Europe/Warsaw')
 
-def planning_error_report(exc, at, stage):
-    """Fail closed with bounded diagnostics, never arbitrary exception text.
-
-    API exceptions may contain credentials, URLs, entity values or local paths.
-    Only fixed stages/codes and a repository code location may leave the worker.
-    """
-    stages = ('config', 'initialise', 'observe', 'run', 'publish', 'refresh')
-    known = {'planning_storage_limit': 'PLANNING_STORAGE_LIMIT',
-             'planning_config_too_large': 'PLANNING_CONFIG_TOO_LARGE'}
-    code = known.get(str(exc), 'PLANNING_EXCEPTION')
-    if isinstance(exc, sqlite3.Error):
-        code = 'PLANNING_SQLITE_ERROR'
-    location = None
-    tb = exc.__traceback__
-    while tb is not None:
-        filename = Path(tb.tb_frame.f_code.co_filename).name
-        if filename in ('planning_runtime.py', 'household_advisory.py',
-                        'control_safety.py', 'balance_quality.py', 'demand_runtime.py'):
-            location = {'module': filename, 'line': tb.tb_lineno}
-        tb = tb.tb_next
-    return {'generated_at': at,
-            'valid_until': (stamp(at) + timedelta(seconds=45)).isoformat(),
-            'status': 'PLANNING_ERROR', 'control_enabled': False,
-            'current_plan_usable_for_simulation': False,
-            'decisions': [], 'building_decisions': [],
-            'household_advisory': {'status': 'BLOCKED', 'control_enabled': False,
-                                   'decisions': [], 'reason': code},
-            'error': {'code': code, 'stage': stage if stage in stages else 'unknown',
-                      'exception_type': type(exc).__name__ if type(exc) in
-                      (OSError, ValueError, KeyError, TypeError, sqlite3.Error,
-                       sqlite3.OperationalError, sqlite3.DatabaseError,
-                       sqlite3.IntegrityError) else 'PlanningException',
-                      'location': location},
-            'diagnostic_scope': 'worker_exception_only_not_device_evidence'}
-
 class Store:
     def __init__(self, path, config):
         self.c = sqlite3.connect(path, timeout=1, isolation_level=None)
@@ -207,32 +172,25 @@ def main():
                     'source_fingerprint':store.fingerprint,'model_version':'weather-response-held-disabled+persistence-v1','temperature_model_enabled':False,'local_temperature_input':prediction['local_temperature_input'],'temperature_accuracy_improvement_validated':False,
                     'control_enabled':False,'horizon':prediction['horizon']}
                 atomic('/ha_config/ems_shadow/demand_report.yaml',report)
-                planning_stage = 'config'
                 try:
                     planning_path=Path(args.planning_config)
                     if planning_path.exists():
                         if planning_path.stat().st_size>65536:raise ValueError('planning_config_too_large')
                         planning_config=json.loads(planning_path.read_text())
                         if planning_config.get('enabled') is True:
-                            planning_stage = 'initialise'
                             if planner is None:planner=Planner(root/'planning-v1.sqlite')
-                            planning_stage = 'observe'
                             planner.observe(states,at,json.loads(Path(args.options).read_text()))
                             if time.monotonic()>=next_planning:
-                                planning_stage = 'run'
                                 result=planner.run(states,prediction,at,planning_config,json.loads(Path(args.options).read_text()))
-                                planning_stage = 'publish'
                                 atomic('/ha_config/ems_shadow/planning_report.yaml',result)
                                 next_planning=time.monotonic()+300
                                 planner.last_report=result
                             elif getattr(planner,'last_report',None):
-                                planning_stage = 'refresh'
                                 result=refresh_plan_report(planner,at)
                                 atomic('/ha_config/ems_shadow/planning_report.yaml',result)
-                except (OSError,ValueError,KeyError,TypeError,sqlite3.Error) as exc:
-                    if planner is not None:planner.last_report = None
+                except (OSError,ValueError,KeyError,TypeError,sqlite3.Error):
                     try:
-                        atomic('/ha_config/ems_shadow/planning_report.yaml',planning_error_report(exc, at, planning_stage))
+                        atomic('/ha_config/ems_shadow/planning_report.yaml',{'generated_at':at,'valid_until':(stamp(at)+timedelta(seconds=45)).isoformat(),'status':'PLANNING_ERROR','control_enabled':False})
                     except OSError:pass
             except (OSError,ValueError,KeyError,TypeError):
                 status='API_OR_DATA_ERROR'
