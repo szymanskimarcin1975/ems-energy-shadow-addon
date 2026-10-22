@@ -34,7 +34,7 @@ jobs:
       - name: Fetch exact installed source for code-only recovery test
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: 6c26602375d974fdfbea03a83b1a27a2fbc644d5
+          ref: 2427748fae954e4724d6a14219e81963a9475207
           path: baseline
           persist-credentials: false
       - name: Build installed baseline image
