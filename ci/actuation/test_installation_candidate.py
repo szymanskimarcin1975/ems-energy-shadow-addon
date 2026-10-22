@@ -127,10 +127,25 @@ class PackagingTests(unittest.IsolatedAsyncioTestCase):
             p=Path(d);(p/'hub.py').write_text('changed')
             with self.assertRaisesRegex(ValueError,'UNREVIEWED'):builder.companion(p)
 
+    async def test_artifact_versions_match_actual_source(self):
+        import os,zipfile
+        source=Path(os.environ.get('SOLAREDGE_SOURCE','/workspace/scratch/700f4f124b09/solaredge-404-reference/custom_components/solaredge_modbus_multi'))
+        if not source.exists():self.skipTest('exact upstream source not supplied')
+        with tempfile.TemporaryDirectory() as tmp:
+            out=Path(tmp)/'candidate'
+            builder.build(source,out,ROOT)
+            state=json.loads((out/'INSTALLATION-STATE.json').read_text())
+            version=state['addon_version'];gateway=state['gateway_version']
+            with zipfile.ZipFile(out/f'ems-shadow-{version}-source.zip') as z:
+                self.assertIn('version: '+version,z.read('ems_shadow/config.yaml').decode())
+            with zipfile.ZipFile(out/f'ems-epoch-gateway-{gateway}.zip') as z:
+                self.assertEqual(json.loads(z.read('custom_components/ems_epoch_gateway/manifest.json'))['version'],gateway)
+            self.assertFalse((out/'ems-shadow-0.1.4-observation.42-source.zip').exists())
+
     async def test_disabled_installation_defaults(self):
         config=(ROOT/'ems_shadow/config.yaml').read_text()
-        self.assertIn('0.1.4-observation.42',config)
-        self.assertIn('io.hass.version="0.1.4-observation.42"',(ROOT/'ems_shadow/Dockerfile').read_text())
+        self.assertIn('0.1.4-observation.45',config)
+        self.assertIn('io.hass.version="0.1.4-observation.45"',(ROOT/'ems_shadow/Dockerfile').read_text())
         source=(ROOT/'custom_components/ems_epoch_gateway/__init__.py').read_text()
         self.assertIn('candidate.get("enabled") is True',source)
         self.assertNotIn('transition_owner(', (ROOT/'tools/installation/prepare_candidate.py').read_text())

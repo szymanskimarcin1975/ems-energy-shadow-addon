@@ -3,6 +3,7 @@ name: EMS HA epoch gateway isolated checks
 on:
   push:
     paths:
+      - 'deployment/adapter42/**'
       - 'custom_components/ems_epoch_gateway/**'
       - 'ems_shadow/tests/test_ha_gateway_store_20261018.py'
       - 'ems_shadow/tests/test_actuation_candidate.py'
@@ -12,6 +13,7 @@ on:
       - '.github/workflows/ems-ha-epoch-gateway.yml'
   pull_request:
     paths:
+      - 'deployment/adapter42/**'
       - 'custom_components/ems_epoch_gateway/**'
       - 'ems_shadow/tests/test_ha_gateway_store_20261018.py'
       - 'ems_shadow/tests/test_actuation_candidate.py'
@@ -59,6 +61,8 @@ jobs:
           python ci/actuation/test_installation_candidate.py -v
           python ci/actuation/test_poll120.py -v
           python ci/actuation/test_wear_energy.py -v
+          python ci/actuation/test_adapter42_config.py -v
+          python ci/actuation/test_adapter_lifecycle_guards.py -v
       - name: Windows installer syntax and SSH guard scenarios (mocked, no network)
         env:
           SOLAREDGE_SOURCE: upstream/custom_components/solaredge_modbus_multi
@@ -66,7 +70,10 @@ jobs:
       - name: Build disabled installation and exact upstream recovery artifacts
         run: |
           python tools/installation/prepare_candidate.py --solaredge-source upstream/custom_components/solaredge_modbus_multi --output installation-candidate
+          cp deployment/adapter42/actuation_candidate.yaml installation-candidate/adapter42-actuation_candidate.yaml
+          cp deployment/adapter42/README.md installation-candidate/adapter42-README.md
           cd installation-candidate
+          sha256sum adapter42-* >> SHA256SUMS
           sha256sum -c SHA256SUMS
       - name: Preserve review artifacts (not a release or production installation)
         uses: actions/upload-artifact@v4
@@ -92,7 +99,9 @@ jobs:
       - name: Install exact HA API in isolated CI
         run: python -m pip install homeassistant==2026.10.0
       - name: Actual HA service registration, default no-write and permissions
-        run: python ci/actuation/ha_service_smoke.py
+        run: |
+          python ci/actuation/ha_service_smoke.py
+          python ci/actuation/ha_adapter42_smoke.py
       - name: Pinned transport no ambiguous write replay (loopback only)
         run: |
           python -m pip install 'modbus-connection[tmodbus]==4.10.0' tmodbus==0.6.1

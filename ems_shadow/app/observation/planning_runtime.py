@@ -181,8 +181,21 @@ class Planner:
         except Exception:
             self.c.close();raise
     def storage_guard(self):
-        sizes=sum(p.stat().st_size for p in (self.path,Path(str(self.path)+'-wal'),Path(str(self.path)+'-shm')) if p.exists())
-        if sizes>=256*1024*1024 or shutil.disk_usage(self.path.parent).free<64*1024*1024:raise OSError('planning_storage_limit')
+        parts=[p.stat().st_size if p.exists() else 0 for p in
+               (self.path,Path(str(self.path)+'-wal'),Path(str(self.path)+'-shm'))]
+        sizes=sum(parts);free=shutil.disk_usage(self.path.parent).free
+        database_limit=256*1024*1024;free_floor=64*1024*1024
+        database_blocked=sizes>=database_limit;disk_blocked=free<free_floor
+        if database_blocked or disk_blocked:
+            error=OSError('planning_storage_limit')
+            # Fixed keys and byte counts only: never export paths or raw exceptions.
+            error.planning_storage_diagnostics={
+                'reason':'DATABASE_AND_DISK_LIMIT' if database_blocked and disk_blocked else
+                         ('DATABASE_SIZE_LIMIT' if database_blocked else 'DISK_FREE_FLOOR'),
+                'database_bytes':parts[0],'wal_bytes':parts[1],'shm_bytes':parts[2],
+                'combined_bytes':sizes,'database_limit_bytes':database_limit,
+                'free_bytes':free,'free_floor_bytes':free_floor}
+            raise error
     def observe(self,states,at,options):
         self.storage_guard()
         result=self.quality.observe(states,at,options)

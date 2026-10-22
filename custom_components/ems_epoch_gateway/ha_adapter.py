@@ -176,6 +176,15 @@ class HASolarEdgeAdapter:
         if self.termination_observer is None:
             raise ValueError('DEVICE_TERMINATION_OBSERVER_UNAVAILABLE')
         plan_until = await self.validate_plan(request, monitoring=True) if monitoring else await self.validate_plan(request)
+        if not monitoring:
+            # Do not admit a lease that can outlive the evidence needed to STOP.
+            timeout = self.config.get('command_timeout_s')
+            if type(timeout) is not int or not 1 <= timeout <= 3600 or not finite(plan_until):
+                raise ValueError('COMMAND_LEASE_UNCONFIRMED')
+            stop_until = self.clock() + 30 + timeout + 390
+            for name in ('external_writer_fence', 'stop_procedure'):
+                if self.evidence(name)['valid_until'] <= stop_until:
+                    raise ValueError('STOP_EVIDENCE_EXPIRES_BEFORE_LEASE_END')
         sample = copy.deepcopy(self.sample)
         if sample is None or self.coordinator.last_update_success is not True:
             raise ValueError('COMPLETE_MODBUS_POLL_UNCONFIRMED')
@@ -211,9 +220,18 @@ class HASolarEdgeAdapter:
             margin = self.config.get('import_margin_w')
             if not finite(margin) or margin <= 0:
                 raise ValueError('IMPORT_MARGIN_UNVERIFIED')
-            if sample['m1_w'] >= -margin:
-                raise ValueError('NO_CONFIRMED_IMPORT_HEADROOM')
-            sample['direction_limit_w'] = min(sample['direction_limit_w'], -sample['m1_w'] - margin)
+            if monitoring:
+                # Mode 5 is a power ceiling, not a fixed discharge demand. Once
+                # active it reduces measured grid import itself. DC battery W
+                # cannot safely reconstruct AC load without verified losses.
+                # Keep BMS ceilings and reject observed export; do not treat
+                # residual import as the original available household demand.
+                if sample['m1_w'] > 0:
+                    raise ValueError('OBSERVED_GRID_EXPORT_DURING_DISCHARGE')
+            else:
+                if sample['m1_w'] >= -margin:
+                    raise ValueError('NO_CONFIRMED_IMPORT_HEADROOM')
+                sample['direction_limit_w'] = min(sample['direction_limit_w'], -sample['m1_w'] - margin)
         return sample
 
     async def monitor_preflight(self, request):

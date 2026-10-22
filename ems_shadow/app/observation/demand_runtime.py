@@ -39,7 +39,7 @@ def planning_error_report(exc, at, stage):
                         'control_safety.py', 'balance_quality.py', 'demand_runtime.py'):
             location = {'module': filename, 'line': tb.tb_lineno}
         tb = tb.tb_next
-    return {'generated_at': at,
+    report = {'generated_at': at,
             'valid_until': (stamp(at) + timedelta(seconds=45)).isoformat(),
             'status': 'PLANNING_ERROR', 'control_enabled': False,
             'current_plan_usable_for_simulation': False,
@@ -53,6 +53,15 @@ def planning_error_report(exc, at, stage):
                        sqlite3.IntegrityError) else 'PlanningException',
                       'location': location},
             'diagnostic_scope': 'worker_exception_only_not_device_evidence'}
+    detail=getattr(exc,'planning_storage_diagnostics',None)
+    numeric=('database_bytes','wal_bytes','shm_bytes','combined_bytes',
+             'database_limit_bytes','free_bytes','free_floor_bytes')
+    reasons=('DATABASE_SIZE_LIMIT','DISK_FREE_FLOOR','DATABASE_AND_DISK_LIMIT')
+    if (code=='PLANNING_STORAGE_LIMIT' and isinstance(detail,dict)
+            and detail.get('reason') in reasons
+            and all(type(detail.get(key)) is int and detail[key]>=0 for key in numeric)):
+        report['error']['storage']={'reason':detail['reason'],**{key:detail[key] for key in numeric}}
+    return report
 
 class Store:
     def __init__(self, path, config):
