@@ -129,8 +129,8 @@ class PackagingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_disabled_installation_defaults(self):
         config=(ROOT/'ems_shadow/config.yaml').read_text()
-        self.assertIn('0.1.4-observation.42',config)
-        self.assertIn('io.hass.version="0.1.4-observation.42"',(ROOT/'ems_shadow/Dockerfile').read_text())
+        self.assertIn('0.1.4-observation.43',config)
+        self.assertIn('io.hass.version="0.1.4-observation.43"',(ROOT/'ems_shadow/Dockerfile').read_text())
         source=(ROOT/'custom_components/ems_epoch_gateway/__init__.py').read_text()
         self.assertIn('candidate.get("enabled") is True',source)
         self.assertNotIn('transition_owner(', (ROOT/'tools/installation/prepare_candidate.py').read_text())
