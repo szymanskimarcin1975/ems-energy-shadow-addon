@@ -2,6 +2,8 @@
 
 Production remains addon .43, owner LEGACY, authorization OFF. No commissioning evidence is manufactured by this PR. Version .44 remains the separately reviewed forward recovery to original .42; it is not reused here.
 
+Prepared versions: addon .45 and gateway 0.2.0-rc.4, not published or installed. Artifact labels derive from their manifests so .45 code cannot be mislabeled as .42 recovery.
+
 ## Scope
 
 Reuse the disabled adapter bindings from PR22 without merging PR22–24. Preserve the production planner fingerprint. No POWER_SAVING or fingerprint-format change is introduced while the current contract agrees. Fix only the identified adapter lifecycle defects and expose the reason for the new planning storage guard failure. No database deletion, limit increase, VACUUM, migration or production write is performed.
